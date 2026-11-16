@@ -4,9 +4,15 @@ import {
   buildPromptBlocksFromAttachments,
 } from "@/lib/acp/prompt-attachments";
 import {
+  createBufferedRun,
+  createRunSseStream,
+  finishBufferedRun,
+  pushRunEvent,
+} from "@/lib/acp/run-buffer";
+import {
   buildSessionSnapshot,
-  cancelAcpTurn,
   extractAcpToolOutput,
+  getExistingAcpSession,
   getOrCreateAcpSession,
 } from "@/lib/acp/session-manager";
 import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
@@ -123,6 +129,34 @@ function streamStaticOpenUIResponse(
   });
 }
 
+const SSE_HEADERS = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache, no-transform",
+  Connection: "keep-alive",
+} as const;
+
+export async function GET(req: NextRequest) {
+  const threadId = new URL(req.url).searchParams.get("threadId")?.trim();
+  if (!threadId) {
+    return new Response(JSON.stringify({ error: "threadId is required." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const entry = getExistingAcpSession(threadId);
+  if (!entry?.activeRun) {
+    return new Response(JSON.stringify({ error: "No active or recent run found." }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  return new Response(createRunSseStream(entry.activeRun, req.signal), {
+    headers: SSE_HEADERS,
+  });
+}
+
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as ChatRequestBody;
   const threadId = body.threadId?.trim() || crypto.randomUUID();
@@ -223,41 +257,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-      const emit = (event: Record<string, unknown>) => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(sseLine(event)));
-        } catch {
-          closed = true;
-        }
-      };
+  const run = createBufferedRun(threadId, runId);
+  sessionEntry.activeRun = run;
 
-      const finish = () => {
-        if (closed) return;
-        emit({ type: EventType.RUN_FINISHED, threadId, runId });
-        try {
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.close();
-        } catch {
-          // client already disconnected
-        }
-        closed = true;
-      };
+  const emit = (event: Record<string, unknown>) => {
+    pushRunEvent(run, sseLine(event));
+  };
 
-      emit({ type: EventType.RUN_STARTED, threadId, runId });
-      emit({
-        type: EventType.CUSTOM,
-        name: "acp",
-        value: { type: "session_snapshot", snapshot: buildSessionSnapshot(sessionEntry) },
-      });
+  const finish = () => {
+    emit({ type: EventType.RUN_FINISHED, threadId, runId });
+    finishBufferedRun(run);
+  };
 
-      let currentTextId: string | null = null;
-      let hasAssistantText = false;
-      let thinkingId: string | null = null;
+  emit({ type: EventType.RUN_STARTED, threadId, runId });
+  emit({
+    type: EventType.CUSTOM,
+    name: "acp",
+    value: { type: "session_snapshot", snapshot: buildSessionSnapshot(sessionEntry) },
+  });
+
+  let currentTextId: string | null = null;
+  let hasAssistantText = false;
+  let thinkingId: string | null = null;
       let thinkingStarted = false;
       let thinkingText = "";
       let activeParentMsgId: string | undefined;
@@ -403,11 +424,6 @@ export async function POST(req: NextRequest) {
         }
       };
 
-      const onAbort = () => {
-        void cancelAcpTurn(threadId);
-      };
-      req.signal.addEventListener("abort", onAbort);
-
       const { blocks: attachmentBlocks, hasBinaryBlobs } =
         buildPromptBlocksFromAttachments(fileAttachments);
       const promptBlocks: acp.ContentBlock[] = [];
@@ -524,10 +540,8 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           closeThinking();
           closeTextMessage();
-          if (!req.signal.aborted) {
-            const msg = err instanceof Error ? err.message : String(err);
-            emit({ type: EventType.RUN_ERROR, message: msg });
-          }
+          const msg = err instanceof Error ? err.message : String(err);
+          emit({ type: EventType.RUN_ERROR, message: msg });
         } finally {
           if (tempAttachmentDir) {
             void fs.rm(tempAttachmentDir, { recursive: true, force: true }).catch(() => {});
@@ -536,18 +550,11 @@ export async function POST(req: NextRequest) {
           sessionEntry.lastUsed = Date.now();
           sessionEntry.activeUpdateListener = undefined;
           sessionEntry.activeCustomListener = undefined;
-          req.signal.removeEventListener("abort", onAbort);
           finish();
         }
       })();
-    },
-  });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    },
+  return new Response(createRunSseStream(run, req.signal), {
+    headers: SSE_HEADERS,
   });
 }

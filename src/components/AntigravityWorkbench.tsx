@@ -8,6 +8,7 @@ import { AntigravityUserMessage } from "@/components/AntigravityUserMessage";
 import { AntigravityDialogs } from "@/components/Dialogs";
 import { FolderSidebar } from "@/components/FolderSidebar";
 import { ThreadAutoRenamer } from "@/components/ThreadAutoRenamer";
+import { ThreadRunRecovery } from "@/components/ThreadRunRecovery";
 import { acpStore } from "@/lib/client/acp-store";
 import { createAntigravityChatBindings } from "@/lib/client/local-storage";
 import { useThread } from "@openuidev/react-headless";
@@ -146,6 +147,7 @@ export function AntigravityWorkbench() {
 
         <AntigravityDialogs />
         <ThreadAutoRenamer />
+        <ThreadRunRecovery />
       </AgentInterface>
     </div>
   );

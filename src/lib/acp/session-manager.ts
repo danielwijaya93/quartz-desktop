@@ -1,3 +1,4 @@
+import type { BufferedRun } from "@/lib/acp/run-buffer";
 import {
   classifyAttachmentKind,
   extractInlineAttachmentsFromText,
@@ -80,6 +81,7 @@ export interface AcpSessionEntry {
   pendingPermissions: Map<string, PendingPermissionEntry>;
   isStreaming: boolean;
   lastUsed: number;
+  activeRun?: BufferedRun;
   activeUpdateListener?: UpdateListener;
   activeCustomListener?: CustomListener;
   replayCollector?: acp.SessionUpdate[];

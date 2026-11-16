@@ -248,6 +248,17 @@ export function AntigravityComposer({
     [autocomplete, textContent, setTextContent],
   );
 
+  const handleCancel = useCallback(() => {
+    if (selectedThreadId) {
+      void fetch("/api/acp/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", threadId: selectedThreadId }),
+      }).catch(() => {});
+    }
+    cancelMessage();
+  }, [selectedThreadId, cancelMessage]);
+
   const handleSubmit = useCallback(() => {
     const trimmed = textContent.trim();
     if ((!trimmed && attachments.length === 0) || isRunning || isLoadingMessages) {
@@ -767,7 +778,7 @@ export function AntigravityComposer({
 
               <button
                 type="button"
-                onClick={isRunning ? cancelMessage : handleSubmit}
+                onClick={isRunning ? handleCancel : handleSubmit}
                 aria-label={isRunning ? "Cancel generation" : "Send message"}
                 className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black disabled:opacity-40"
                 disabled={!isRunning && !textContent.trim() && attachments.length === 0}

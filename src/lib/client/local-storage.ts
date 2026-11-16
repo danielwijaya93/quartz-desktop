@@ -121,7 +121,7 @@ async function readMessagesFromStore(threadId: string): Promise<Message[]> {
   return legacy;
 }
 
-function enqueueMessageWrite(threadId: string, messages: Message[]): Promise<void> {
+export function enqueueMessageWrite(threadId: string, messages: Message[]): Promise<void> {
   const prev = writeQueues.get(threadId) ?? Promise.resolve();
   const next = prev
     .catch(() => {})
@@ -164,6 +164,127 @@ export async function importReplayedSessionToStorage(params: {
   return thread;
 }
 
+function waitUntilVisibleOrDelay(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    if (typeof document === "undefined" || document.visibilityState === "visible") {
+      const t = setTimeout(resolve, 400);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(t);
+        resolve();
+      }, { once: true });
+      return;
+    }
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        document.removeEventListener("visibilitychange", onVisible);
+        setTimeout(resolve, 250);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        document.removeEventListener("visibilitychange", onVisible);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+function createResilientSseStream(
+  initialBody: ReadableStream<Uint8Array>,
+  threadId: string,
+  signal?: AbortSignal,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let currentBody: ReadableStream<Uint8Array> | null = initialBody;
+      let forwardedFrames = 0;
+      let sawDone = false;
+      let reattachAttempts = 0;
+
+      while (currentBody && !sawDone && !signal?.aborted) {
+        const reader = currentBody.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let framesInThisStream = 0;
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            let sepIdx = buffer.indexOf("\n\n");
+            while (sepIdx !== -1) {
+              const frame = buffer.slice(0, sepIdx + 2);
+              buffer = buffer.slice(sepIdx + 2);
+              framesInThisStream += 1;
+
+              if (framesInThisStream > forwardedFrames) {
+                forwardedFrames = framesInThisStream;
+                controller.enqueue(encoder.encode(frame));
+                if (frame.startsWith("data: [DONE]")) {
+                  sawDone = true;
+                }
+              }
+              sepIdx = buffer.indexOf("\n\n");
+            }
+          }
+
+          const tail = buffer + decoder.decode();
+          if (tail.trim()) {
+            framesInThisStream += 1;
+            if (framesInThisStream > forwardedFrames) {
+              forwardedFrames = framesInThisStream;
+              controller.enqueue(encoder.encode(tail));
+              if (tail.includes("data: [DONE]")) {
+                sawDone = true;
+              }
+            }
+          }
+
+          break;
+        } catch (err) {
+          if (signal?.aborted || sawDone || reattachAttempts >= 5) {
+            controller.error(err);
+            return;
+          }
+          reattachAttempts += 1;
+          await waitUntilVisibleOrDelay(signal);
+          if (signal?.aborted) {
+            controller.error(err);
+            return;
+          }
+          const resumeRes = await fetch(
+            `/api/chat?threadId=${encodeURIComponent(threadId)}`,
+            { signal },
+          ).catch(() => null);
+
+          if (!resumeRes?.ok || !resumeRes.body) {
+            controller.error(err);
+            return;
+          }
+          currentBody = resumeRes.body;
+        }
+      }
+
+      try {
+        controller.close();
+      } catch {
+        // already closed
+      }
+    },
+  });
+}
+
 export function createAntigravityChatBindings(): {
   llm: ChatLLM;
   storage: ChatStorage;
@@ -178,12 +299,14 @@ export function createAntigravityChatBindings(): {
       const state = acpStore.getState();
       const attachments = acpStore.consumeAttachments();
       let mergedBody: string | BodyInit | null | undefined = init?.body;
+      let requestThreadId = activeThreadId;
 
       if (typeof init?.body === "string") {
         try {
           const parsed = JSON.parse(init.body) as Record<string, unknown>;
           const threadId = typeof parsed.threadId === "string" ? parsed.threadId : "";
           activeThreadId = threadId;
+          requestThreadId = threadId;
           mergedBody = JSON.stringify({
             ...parsed,
             acpSessionId: state.acpSessionIds[threadId],
@@ -208,7 +331,18 @@ export function createAntigravityChatBindings(): {
         }
       }
 
-      return fetch(input, { ...init, body: mergedBody });
+      const res = await fetch(input, { ...init, body: mergedBody });
+      if (res.ok && res.body && requestThreadId) {
+        return new Response(
+          createResilientSseStream(res.body, requestThreadId, init?.signal ?? undefined),
+          {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers,
+          },
+        );
+      }
+      return res;
     },
   });
 
