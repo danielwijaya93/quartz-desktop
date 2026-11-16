@@ -1,5 +1,6 @@
 "use client";
 
+import type { DirectoryInspection } from "@/lib/acp/folders";
 import type {
   AcpSessionMcpServer,
   AcpSessionSnapshot,
@@ -8,9 +9,9 @@ import type {
   ReplayedTranscriptMessage,
 } from "@/lib/acp/types";
 import { acpStore, useAcpStore } from "@/lib/client/acp-store";
-import { importReplayedSessionToStorage } from "@/lib/client/local-storage";
-import { useThreadList } from "@openuidev/react-headless";
-import { Plus, Power, Trash2, X } from "lucide-react";
+import { importReplayedSessionToStorage, listStoredThreads } from "@/lib/client/local-storage";
+import { useThreadList, type Thread } from "@openuidev/react-headless";
+import { FolderPlus, Plus, Power, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 function ModalDialog({
@@ -106,7 +107,7 @@ export function AntigravityDialogs() {
   return (
     <>
       <McpManagerDialog open={activeModal === "mcp"} onClose={close} />
-      <WorkspaceDialog open={activeModal === "workspace"} onClose={close} />
+      <AddFolderDialog open={activeModal === "add-folder"} onClose={close} />
       <SessionHistoryDialog open={activeModal === "sessions"} onClose={close} />
     </>
   );
@@ -404,129 +405,262 @@ function McpManagerDialog({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-function WorkspaceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const selectedThreadId = useThreadList((s) => s.selectedThreadId);
-  const storeCwd = useAcpStore((s) => s.cwd);
-  const storeDirs = useAcpStore((s) => s.additionalDirectories);
+function AddFolderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const existingFolders = useAcpStore((s) => s.folders);
 
-  const [cwdInput, setCwdInput] = useState(storeCwd);
-  const [dirs, setDirs] = useState<string[]>(storeDirs);
-  const [newDir, setNewDir] = useState("");
+  const [pathInput, setPathInput] = useState("");
+  const [labelInput, setLabelInput] = useState("");
+  const [trustedWorkspaces, setTrustedWorkspaces] = useState<string[]>([]);
+  const [inspection, setInspection] = useState<DirectoryInspection | null>(null);
+  const [trustInCli, setTrustInCli] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      setCwdInput(storeCwd);
-      setDirs(storeDirs);
-    }
-  }, [open, storeCwd, storeDirs]);
+  const pathId = useId();
+  const helpId = useId();
+  const errorId = useId();
+  const labelId = useId();
+  const trustId = useId();
+  const pathRef = useRef<HTMLInputElement>(null);
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
+  useEffect(() => {
+    if (!open) return;
+    setPathInput("");
+    setLabelInput("");
+    setInspection(null);
+    setTrustInCli(true);
+    setError(null);
+
+    const ctrl = new AbortController();
+    fetch("/api/folders", { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { trustedWorkspaces?: string[] } | null) => {
+        if (data?.trustedWorkspaces) {
+          setTrustedWorkspaces(data.trustedWorkspaces);
+        }
+      })
+      .catch(() => {});
+
+    return () => ctrl.abort();
+  }, [open]);
+
+  const inspectPath = async (candidate: string, surfaceInvalid = false) => {
+    const trimmed = candidate.trim();
+    if (!trimmed) {
+      setInspection(null);
+      if (surfaceInvalid) {
+        setError("Please enter a directory path.");
+      }
+      return;
+    }
+
     try {
-      const nextCwd = cwdInput.trim();
-      acpStore.setPreferences({ cwd: nextCwd, additionalDirectories: dirs });
-      const threadKey = selectedThreadId || "bootstrap";
-      const res = await fetch("/api/acp/session", {
+      const qs = new URLSearchParams({ path: trimmed });
+      const res = await fetch(`/api/folders?${qs.toString()}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { inspection?: DirectoryInspection };
+      if (data.inspection) {
+        setInspection(data.inspection);
+        if (data.inspection.valid) {
+          setError(null);
+        } else if (surfaceInvalid) {
+          setError(data.inspection.error ?? "Directory not found.");
+        }
+      }
+    } catch {
+      // ignore aborted/transient inspect
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const trimmed = pathInput.trim();
+    if (!trimmed) {
+      setInspection(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      void inspectPath(trimmed, false);
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [open, pathInput]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = pathInput.trim();
+    if (!trimmed) {
+      setError("Please enter a directory path.");
+      pathRef.current?.focus();
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/folders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "updateWorkspace",
-          threadId: threadKey,
-          cwd: nextCwd || undefined,
-          additionalDirectories: dirs,
-          mcpServers: acpStore.getState().sessionMcpServers,
-          mode: acpStore.getState().preferredMode || "auto",
+          action: "add",
+          path: trimmed,
+          trustInCli,
         }),
       });
-      if (res.ok) {
-        const data = (await res.json()) as { snapshot?: AcpSessionSnapshot };
-        if (data.snapshot) acpStore.setSnapshot(threadKey, data.snapshot);
+      const data = (await res.json()) as {
+        folder?: { cwd: string; name: string };
+        inspection?: DirectoryInspection;
+        error?: string;
+      };
+      if (!res.ok || !data.folder) {
+        if (data.inspection) setInspection(data.inspection);
+        setError(data.error ?? "Failed to add folder.");
+        pathRef.current?.focus();
+        return;
       }
+
+      acpStore.addFolder({
+        cwd: data.folder.cwd,
+        name: labelInput.trim() || data.folder.name,
+      });
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add folder.");
+      pathRef.current?.focus();
     } finally {
       setSaving(false);
     }
   };
 
+  const existingCwds = new Set(existingFolders.map((f) => f.cwd));
+
   return (
-    <ModalDialog open={open} title="Workspace & Additional Directories (--add-dir)" onClose={onClose}>
-      <form onSubmit={handleSave} className="space-y-4 text-sm">
+    <ModalDialog open={open} title="Add Workspace Folder" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4 text-sm" noValidate>
         <div>
-          <label htmlFor="workspace-cwd" className="mb-1 block text-xs font-semibold">
-            Working Directory (cwd)
+          <label htmlFor={pathId} className="mb-1 block text-xs font-semibold">
+            Directory Path
           </label>
+          <p id={helpId} className="mb-1.5 text-[11px] opacity-70">
+            Enter an existing local folder path (supports <code className="font-mono">~/...</code>).
+            Removing a folder only removes it from the sidebar and never deletes files on disk.
+          </p>
           <input
-            id="workspace-cwd"
+            ref={pathRef}
+            id={pathId}
+            name="folderPath"
             type="text"
-            value={cwdInput}
-            onChange={(e) => setCwdInput(e.target.value)}
-            placeholder="/path/to/workspace"
+            value={pathInput}
+            onChange={(e) => {
+              setPathInput(e.target.value);
+              if (error) setError(null);
+            }}
+            onBlur={() => {
+              if (pathInput.trim()) void inspectPath(pathInput, true);
+            }}
+            aria-describedby={error ? `${helpId} ${errorId}` : helpId}
+            aria-invalid={error ? "true" : undefined}
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            enterKeyHint="done"
+            required
+            placeholder="/home/danielwijaya/my-project"
             className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-transparent px-3 py-2 font-mono text-xs"
           />
+          {error && (
+            <div
+              id={errorId}
+              role="alert"
+              className="mt-1.5 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400"
+            >
+              {error}
+            </div>
+          )}
         </div>
 
         <div>
-          <div className="mb-1 text-xs font-semibold">Additional Directories (--add-dir)</div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newDir}
-              onChange={(e) => setNewDir(e.target.value)}
-              placeholder="/path/to/extra/dir"
-              aria-label="Additional directory path"
-              className="flex-1 rounded-lg border border-black/15 dark:border-white/15 bg-transparent px-3 py-1.5 font-mono text-xs"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (newDir.trim() && !dirs.includes(newDir.trim())) {
-                  setDirs([...dirs, newDir.trim()]);
-                  setNewDir("");
-                }
-              }}
-              className="rounded-lg border border-black/15 dark:border-white/15 px-3 py-1.5 text-xs font-medium"
-            >
-              Add
-            </button>
-          </div>
-          {dirs.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {dirs.map((d) => (
-                <li
-                  key={d}
-                  className="flex items-center justify-between rounded-lg border border-black/10 dark:border-white/10 px-2.5 py-1 text-xs font-mono"
-                >
-                  <span className="truncate">{d}</span>
-                  <button
-                    type="button"
-                    onClick={() => setDirs(dirs.filter((x) => x !== d))}
-                    aria-label={`Remove ${d}`}
-                    className="text-red-500"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <label htmlFor={labelId} className="mb-1 block text-xs font-semibold">
+            Sidebar Label (optional)
+          </label>
+          <input
+            id={labelId}
+            name="folderLabel"
+            type="text"
+            value={labelInput}
+            onChange={(e) => setLabelInput(e.target.value)}
+            placeholder={inspection?.defaultName || "Defaults to folder name"}
+            className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-transparent px-3 py-2 text-xs"
+          />
         </div>
+
+        {inspection?.valid && !inspection.inTrustedWorkspaces && (
+          <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2.5">
+            <input
+              id={trustId}
+              type="checkbox"
+              checked={trustInCli}
+              onChange={(e) => setTrustInCli(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-black dark:accent-white"
+            />
+            <label htmlFor={trustId} className="text-xs leading-relaxed">
+              <span className="font-medium">
+                Also add to Antigravity CLI <code className="font-mono">trustedWorkspaces</code>
+              </span>
+              <span className="mt-0.5 block opacity-75">
+                This folder is not in <code className="font-mono">trustedWorkspaces</code> yet.
+                Adding it avoids repeated trust prompts if you open it in <code className="font-mono">agy</code> CLI later.
+              </span>
+            </label>
+          </div>
+        )}
+
+        {trustedWorkspaces.length > 0 && (
+          <div>
+            <div className="mb-1.5 text-xs font-semibold opacity-80">
+              Trusted Antigravity Folders
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {trustedWorkspaces.map((dir) => {
+                const alreadyAdded = existingCwds.has(dir);
+                return (
+                  <button
+                    key={dir}
+                    type="button"
+                    onClick={() => {
+                      setPathInput(dir);
+                      setError(null);
+                      void inspectPath(dir, true);
+                    }}
+                    className={`inline-flex min-h-[28px] max-w-full items-center gap-1.5 rounded-lg border px-2.5 py-1 text-left font-mono text-[11px] transition-colors ${
+                      alreadyAdded
+                        ? "border-black/10 dark:border-white/10 opacity-60 hover:opacity-100"
+                        : "border-black/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/10"
+                    }`}
+                  >
+                    <FolderPlus className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
+                    <span className="truncate">{dir}</span>
+                    {alreadyAdded && <span className="shrink-0 opacity-60">(added)</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-black/15 dark:border-white/15 px-3 py-1.5 text-xs"
+            className="min-h-[32px] rounded-lg border border-black/15 dark:border-white/15 px-3 py-1.5 text-xs"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-black"
+            className="min-h-[32px] rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-black disabled:opacity-50"
           >
-            {saving ? "Applying..." : "Apply & Restart Session"}
+            {saving ? "Adding..." : "Add Folder"}
           </button>
         </div>
       </form>
@@ -536,10 +670,12 @@ function WorkspaceDialog({ open, onClose }: { open: boolean; onClose: () => void
 
 function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const cwd = useAcpStore((s) => s.cwd);
+  const hiddenThreadIds = useAcpStore((s) => s.hiddenThreadIds);
   const selectThread = useThreadList((s) => s.selectThread);
   const loadThreads = useThreadList((s) => s.loadThreads);
 
   const [sessions, setSessions] = useState<HistoricalAcpSession[]>([]);
+  const [hiddenLocalThreads, setHiddenLocalThreads] = useState<Thread[]>([]);
   const [loading, setLoading] = useState(false);
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -548,6 +684,9 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
     if (!open) return;
     setLoading(true);
     setError(null);
+    const hiddenSet = new Set(hiddenThreadIds);
+    setHiddenLocalThreads(listStoredThreads().filter((t) => hiddenSet.has(t.id)));
+
     const qs = new URLSearchParams({ action: "list", ...(cwd ? { cwd } : {}) });
     fetch(`/api/acp/session?${qs.toString()}`)
       .then((r) => r.json())
@@ -557,7 +696,13 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load sessions"))
       .finally(() => setLoading(false));
-  }, [open, cwd]);
+  }, [open, cwd, hiddenThreadIds]);
+
+  const handleRestoreHidden = (thread: Thread) => {
+    acpStore.restoreHiddenThread(thread.id);
+    selectThread(thread.id);
+    onClose();
+  };
 
   const handleResume = async (s: HistoricalAcpSession) => {
     setResumingId(s.sessionId);
@@ -602,41 +747,74 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
 
   return (
     <ModalDialog open={open} title="Antigravity CLI & ACP Sessions" onClose={onClose}>
-      <div className="space-y-3 text-sm">
-        {error && (
-          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
-            {error}
+      <div className="space-y-4 text-sm">
+        {hiddenLocalThreads.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold opacity-75">
+              Removed from Sidebar (Preserved Local History)
+            </h3>
+            <ul className="space-y-1.5">
+              {hiddenLocalThreads.map((t) => (
+                <li
+                  key={t.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-black/10 dark:border-white/10 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium">{t.title}</div>
+                    <div className="truncate font-mono text-[11px] opacity-60">
+                      {new Date(t.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRestoreHidden(t)}
+                    className="inline-flex min-h-[28px] shrink-0 items-center gap-1 rounded-lg border border-black/15 dark:border-white/15 px-2.5 py-1 text-xs font-medium hover:bg-black/5 dark:hover:bg-white/10"
+                  >
+                    <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                    <span>Restore</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
-        {loading ? (
-          <p className="text-xs opacity-70">Loading Antigravity sessions...</p>
-        ) : sessions.length === 0 ? (
-          <p className="text-xs opacity-70">No sessions found for this workspace.</p>
-        ) : (
-          <ul className="space-y-2">
-            {sessions.map((s) => (
-              <li
-                key={s.sessionId}
-                className="flex items-center justify-between gap-3 rounded-xl border border-black/10 dark:border-white/10 px-3 py-2.5"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{s.title || "Untitled Session"}</div>
-                  <div className="truncate font-mono text-[11px] opacity-65">
-                    {s.cwd} • {s.updatedAt ? new Date(s.updatedAt).toLocaleString() : s.sessionId}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={resumingId === s.sessionId}
-                  onClick={() => handleResume(s)}
-                  className="shrink-0 rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-black"
+
+        <div className="space-y-3">
+          {error && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+              {error}
+            </div>
+          )}
+          {loading ? (
+            <p className="text-xs opacity-70">Loading Antigravity sessions...</p>
+          ) : sessions.length === 0 ? (
+            <p className="text-xs opacity-70">No sessions found for this workspace.</p>
+          ) : (
+            <ul className="space-y-2">
+              {sessions.map((s) => (
+                <li
+                  key={s.sessionId}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-black/10 dark:border-white/10 px-3 py-2.5"
                 >
-                  {resumingId === s.sessionId ? "Loading..." : "Resume"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{s.title || "Untitled Session"}</div>
+                    <div className="truncate font-mono text-[11px] opacity-65">
+                      {s.cwd} • {s.updatedAt ? new Date(s.updatedAt).toLocaleString() : s.sessionId}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={resumingId === s.sessionId}
+                    onClick={() => handleResume(s)}
+                    className="shrink-0 rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white dark:bg-white dark:text-black"
+                  >
+                    {resumingId === s.sessionId ? "Loading..." : "Resume"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </ModalDialog>
   );

@@ -9,6 +9,7 @@ import {
   AntigravityHeaderControls,
 } from "@/components/AntigravityHeader";
 import { AntigravityDialogs } from "@/components/Dialogs";
+import { FolderSidebar } from "@/components/FolderSidebar";
 import { acpStore, useAcpStore } from "@/lib/client/acp-store";
 import { createAntigravityChatBindings } from "@/lib/client/local-storage";
 import { useThread } from "@openuidev/react-headless";
@@ -102,6 +103,30 @@ export function AntigravityWorkbench() {
         agentName="Antigravity GenUI"
         theme={{ mode }}
       >
+        <AgentInterface.Sidebar>
+          <div className="openui-agent-sidebar-actions">
+            <AgentInterface.SidebarHeader />
+            <div className="openui-agent-sidebar-primary-actions">
+              <AgentInterface.NewChatButton />
+              <AgentInterface.HistoryButton />
+              <AgentInterface.ArtifactNav className="openui-agent-sidebar-artifact-nav" />
+            </div>
+          </div>
+
+          <AgentInterface.SidebarContent>
+            <FolderSidebar />
+          </AgentInterface.SidebarContent>
+
+          <AgentInterface.SidebarFooter>
+            <div className="flex w-full items-center justify-between px-1">
+              <span className="antigravity-sidebar-mode-label text-xs opacity-65">
+                ACP Mode: {preferredMode || "auto"}
+              </span>
+              <AgentInterface.ThemeModeToggle mode={mode} onModeChange={setPreference} />
+            </div>
+          </AgentInterface.SidebarFooter>
+        </AgentInterface.Sidebar>
+
         <AgentInterface.ThreadHeader
           start={<AntigravityHeaderControls />}
           end={<AntigravityHeaderActions />}
@@ -111,15 +136,6 @@ export function AntigravityWorkbench() {
         <AgentInterface.Welcome>
           <WelcomeHero />
         </AgentInterface.Welcome>
-
-        <AgentInterface.SidebarFooter>
-          <div className="flex w-full items-center justify-between px-1">
-            <span className="antigravity-sidebar-mode-label text-xs opacity-65">
-              ACP Mode: {preferredMode || "auto"}
-            </span>
-            <AgentInterface.ThemeModeToggle mode={mode} onModeChange={setPreference} />
-          </div>
-        </AgentInterface.SidebarFooter>
 
         <AgentInterface.Composer>
           <AntigravityComposer />

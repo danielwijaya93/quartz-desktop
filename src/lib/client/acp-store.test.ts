@@ -1,7 +1,9 @@
 import type { AcpSessionSnapshot } from "@/lib/acp/types";
 import {
   acpStore,
+  getBootstrapThreadKey,
   getMergedSlashCommands,
+  partitionThreadsByFolder,
   selectEffectiveSnapshot,
   type AcpClientState,
 } from "@/lib/client/acp-store";
@@ -22,11 +24,19 @@ function makeSnapshot(threadId: string, overrides: Partial<AcpSessionSnapshot> =
   };
 }
 
-function makeState(snapshots: Record<string, AcpSessionSnapshot>): AcpClientState {
+function makeState(
+  snapshots: Record<string, AcpSessionSnapshot>,
+  overrides: Partial<AcpClientState> = {},
+): AcpClientState {
   return {
     hydrated: false,
     cwd: "/workspace",
     additionalDirectories: [],
+    folders: [],
+    activeFolderId: null,
+    threadFolderMap: {},
+    hiddenThreadIds: [],
+    hasInitializedDefaultFolder: false,
     sessionMcpServers: [],
     preferredMode: "auto",
     preferredModel: "",
@@ -36,11 +46,12 @@ function makeState(snapshots: Record<string, AcpSessionSnapshot>): AcpClientStat
     attachments: [],
     activeModal: null,
     lastError: null,
+    ...overrides,
   };
 }
 
 describe("selectEffectiveSnapshot", () => {
-  it("falls back to bootstrap snapshot when selectedThreadId is null or uncached", () => {
+  it("falls back to active folder bootstrap or default bootstrap snapshot when selectedThreadId is null or uncached", () => {
     const bootstrap = makeSnapshot("bootstrap", {
       commands: [
         {
@@ -50,10 +61,17 @@ describe("selectEffectiveSnapshot", () => {
         },
       ],
     });
-    const state = makeState({ bootstrap });
+    const folderSnap = makeSnapshot("bootstrap:f1", { cwd: "/projects/f1" });
+    const defaultState = makeState({ bootstrap });
 
-    expect(selectEffectiveSnapshot(state, null)).toBe(bootstrap);
-    expect(selectEffectiveSnapshot(state, "thread-unknown")).toBe(bootstrap);
+    expect(selectEffectiveSnapshot(defaultState, null)).toBe(bootstrap);
+    expect(selectEffectiveSnapshot(defaultState, "thread-unknown")).toBe(bootstrap);
+
+    const folderState = makeState(
+      { bootstrap, [getBootstrapThreadKey("f1")]: folderSnap },
+      { activeFolderId: "f1" },
+    );
+    expect(selectEffectiveSnapshot(folderState, null)).toBe(folderSnap);
   });
 
   it("returns thread snapshot when present", () => {
@@ -92,12 +110,39 @@ describe("getMergedSlashCommands", () => {
   });
 });
 
-describe("acpStore hydration", () => {
+describe("partitionThreadsByFolder", () => {
+  it("groups visible threads by folder, places legacy unmapped threads into active folder, and excludes hidden threads", () => {
+    const threads = [
+      { id: "t1", title: "Alpha" },
+      { id: "t2", title: "Beta" },
+      { id: "t3", title: "Legacy" },
+      { id: "t4", title: "Hidden" },
+    ];
+    const folders = [
+      { id: "f1", name: "proj-1", cwd: "/proj-1" },
+      { id: "f2", name: "proj-2", cwd: "/proj-2" },
+    ];
+
+    const { byFolder, hiddenThreads } = partitionThreadsByFolder({
+      threads,
+      folders,
+      threadFolderMap: { t1: "f1", t2: "f2", t4: "f1" },
+      hiddenThreadIds: ["t4"],
+      activeFolderId: "f2",
+    });
+
+    expect(byFolder.f1.map((t) => t.id)).toEqual(["t1"]);
+    expect(byFolder.f2.map((t) => t.id)).toEqual(["t2", "t3"]);
+    expect(hiddenThreads.map((t) => t.id)).toEqual(["t4"]);
+  });
+});
+
+describe("acpStore hydration and folder lifecycle", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("starts with SSR-safe defaults and loads persisted prefs only on hydrateFromStorage", () => {
+  it("migrates legacy single cwd on hydrateFromStorage and manages folders/threads without losing history", () => {
     expect(acpStore.getState().hydrated).toBe(false);
     expect(acpStore.getState().cwd).toBe("");
 
@@ -107,7 +152,6 @@ describe("acpStore hydration", () => {
         if (key === "agy-openui:workspace-prefs") {
           return JSON.stringify({
             cwd: "/home/danielwijaya",
-            additionalDirectories: ["/tmp/extra"],
             preferredMode: "plan",
           });
         }
@@ -120,7 +164,36 @@ describe("acpStore hydration", () => {
 
     expect(acpStore.getState().hydrated).toBe(true);
     expect(acpStore.getState().cwd).toBe("/home/danielwijaya");
-    expect(acpStore.getState().additionalDirectories).toEqual(["/tmp/extra"]);
+    expect(acpStore.getState().additionalDirectories).toEqual([]);
     expect(acpStore.getState().preferredMode).toBe("plan");
+    expect(acpStore.getState().folders).toHaveLength(1);
+    expect(acpStore.getState().folders[0]).toMatchObject({
+      id: "default",
+      name: "danielwijaya",
+      cwd: "/home/danielwijaya",
+    });
+
+    const extra = acpStore.addFolder({ cwd: "/projects/app/", name: "App" });
+    expect(extra.cwd).toBe("/projects/app");
+    expect(acpStore.getState().activeFolderId).toBe(extra.id);
+    expect(acpStore.getState().cwd).toBe("/projects/app");
+
+    acpStore.assignThreadToFolder("thread-a", extra.id);
+    expect(acpStore.getState().threadFolderMap["thread-a"]).toBe(extra.id);
+
+    // Hide individual thread without losing mapping
+    acpStore.hideThreadFromSidebar("thread-a");
+    expect(acpStore.getState().hiddenThreadIds).toContain("thread-a");
+
+    // Restore brings thread back cleanly
+    acpStore.restoreHiddenThread("thread-a");
+    expect(acpStore.getState().hiddenThreadIds).not.toContain("thread-a");
+
+    // Remove folder hides its threads cleanly without deleting anything on disk
+    acpStore.removeFolder(extra.id, ["thread-a"]);
+    expect(acpStore.getState().folders.some((f) => f.id === extra.id)).toBe(false);
+    expect(acpStore.getState().hiddenThreadIds).toContain("thread-a");
+    expect(acpStore.getState().activeFolderId).toBe("default");
+    expect(acpStore.getState().cwd).toBe("/home/danielwijaya");
   });
 });

@@ -36,6 +36,10 @@ function writeJson(key: string, value: unknown): void {
   }
 }
 
+export function listStoredThreads(): Thread[] {
+  return readJson<Thread[]>(THREADS_KEY, []);
+}
+
 export function importReplayedSessionToStorage(params: {
   threadId: string;
   title: string;
@@ -51,6 +55,10 @@ export function importReplayedSessionToStorage(params: {
   const nextThreads = [thread, ...threads.filter((t) => t.id !== params.threadId)];
   writeJson(THREADS_KEY, nextThreads);
   writeJson(messagesKey(params.threadId), params.messages);
+  if (params.snapshot.cwd) {
+    const folder = acpStore.addFolder({ cwd: params.snapshot.cwd });
+    acpStore.assignThreadToFolder(params.threadId, folder.id);
+  }
   acpStore.setSnapshot(params.threadId, params.snapshot);
   return thread;
 }
@@ -142,6 +150,7 @@ export function createAntigravityChatBindings(): {
           };
           const prev = readJson<Thread[]>(THREADS_KEY, []);
           writeJson(THREADS_KEY, [thread, ...prev]);
+          acpStore.assignThreadToFolder(thread.id);
           return thread;
         },
         async getMessages(threadId: string) {
@@ -156,16 +165,8 @@ export function createAntigravityChatBindings(): {
           return thread;
         },
         async deleteThread(id: string) {
-          const prev = readJson<Thread[]>(THREADS_KEY, []);
-          writeJson(
-            THREADS_KEY,
-            prev.filter((t) => t.id !== id),
-          );
-          try {
-            localStorage.removeItem(messagesKey(id));
-          } catch {
-            // ignore
-          }
+          // Sidebar deletion hides the thread without erasing saved transcripts or session history.
+          acpStore.hideThreadFromSidebar(id);
         },
       },
     },

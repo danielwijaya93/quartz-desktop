@@ -1,9 +1,14 @@
 "use client";
 
 import type { AcpConfigOption, AcpSessionSnapshot } from "@/lib/acp/types";
-import { acpStore, selectEffectiveSnapshot, useAcpStore } from "@/lib/client/acp-store";
+import {
+  acpStore,
+  getBootstrapThreadKey,
+  selectEffectiveSnapshot,
+  useAcpStore,
+} from "@/lib/client/acp-store";
 import { useThreadList } from "@openuidev/react-headless";
-import { FolderGit2, History, Plug, Shield } from "lucide-react";
+import { History, Plug, Shield } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 const FALLBACK_MODELS = [
@@ -33,15 +38,10 @@ function findOption(snapshot: AcpSessionSnapshot | undefined, id: string): AcpCo
   return snapshot?.configOptions.find((c) => c.id === id);
 }
 
-function basename(pathStr: string): string {
-  if (!pathStr) return "workspace";
-  const parts = pathStr.replace(/\/+$/, "").split("/");
-  return parts[parts.length - 1] || pathStr;
-}
-
 export function AntigravityHeaderControls() {
   const selectedThreadId = useThreadList((s) => s.selectedThreadId);
-  const effectiveThreadId = selectedThreadId || "bootstrap";
+  const activeFolderId = useAcpStore((s) => s.activeFolderId);
+  const effectiveThreadId = selectedThreadId || getBootstrapThreadKey(activeFolderId);
 
   const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
   const hydrated = useAcpStore((s) => s.hydrated);
@@ -70,7 +70,7 @@ export function AntigravityHeaderControls() {
         threadId: effectiveThreadId,
         acpSessionId: state.acpSessionIds[effectiveThreadId],
         cwd: state.cwd || undefined,
-        additionalDirectories: state.additionalDirectories,
+        additionalDirectories: [],
         mcpServers: state.sessionMcpServers,
         mode: state.preferredMode || "auto",
         model: state.preferredModel || undefined,
@@ -199,8 +199,6 @@ export function AntigravityHeaderActions() {
   const selectedThreadId = useThreadList((s) => s.selectedThreadId);
 
   const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
-  const cwd = useAcpStore((s) => s.cwd);
-  const additionalDirectories = useAcpStore((s) => s.additionalDirectories);
   const [mcpCount, setMcpCount] = useState<number | null>(null);
 
   useEffect(() => {
@@ -221,20 +219,6 @@ export function AntigravityHeaderActions() {
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
-      <button
-        type="button"
-        onClick={() => acpStore.setActiveModal("workspace")}
-        className="inline-flex min-h-[26px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/15 px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10"
-      >
-        <FolderGit2 className="h-3.5 w-3.5 opacity-75" aria-hidden="true" />
-        <span className="max-w-[140px] truncate">{basename(cwd || snapshot?.cwd || "")}</span>
-        {additionalDirectories.length > 0 && (
-          <span className="rounded bg-black/10 dark:bg-white/15 px-1 text-[10px]">
-            +{additionalDirectories.length}
-          </span>
-        )}
-      </button>
-
       <button
         type="button"
         onClick={() => acpStore.setActiveModal("mcp")}

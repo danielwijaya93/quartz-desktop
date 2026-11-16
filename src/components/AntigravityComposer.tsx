@@ -206,7 +206,7 @@ export function AntigravityComposer({
         return true;
       }
       if (trimmed === "/workspace" || trimmed === "/dir") {
-        acpStore.setActiveModal("workspace");
+        acpStore.setActiveModal("add-folder");
         setTextContent("");
         return true;
       }
