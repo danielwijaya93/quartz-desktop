@@ -92,7 +92,7 @@ export function AntigravityWorkbench() {
   }, [mode]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden">
+    <div className="h-dvh w-screen overflow-hidden">
       <AgentInterface
         llm={llm}
         storage={storage}

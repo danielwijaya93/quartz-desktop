@@ -24,6 +24,13 @@ dialog::backdrop {
   display: none;
 }
 
+.openui-agent-container--mobile .openui-agent-mobile-header {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
 .openui-agent-thread-container:not(:has(.openui-agent-welcome-screen))
   .openui-agent-thread-scroll-area {
   padding-top: var(--openui-space-l);
