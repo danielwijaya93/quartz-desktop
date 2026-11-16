@@ -1,5 +1,6 @@
 "use client";
 
+import type { AttachmentKind } from "@/lib/acp/attachments";
 import type {
   AcpAppDataDir,
   AcpCommand,
@@ -10,12 +11,17 @@ import type {
 } from "@/lib/acp/types";
 import { useSyncExternalStore } from "react";
 
-export interface ImageAttachment {
+export interface ComposerAttachment {
   id: string;
   name: string;
   mimeType: string;
-  data: string;
+  size: number;
+  kind: AttachmentKind;
+  data?: string;
+  text?: string;
 }
+
+export type ImageAttachment = ComposerAttachment;
 
 export type ActiveModalKind = null | "mcp" | "add-folder" | "sessions";
 
@@ -85,7 +91,7 @@ export interface AcpClientState {
   pendingAutoTitleIds: string[];
   autoTitledThreadIds: string[];
   manuallyRenamedThreadIds: string[];
-  attachments: ImageAttachment[];
+  attachments: ComposerAttachment[];
   activeModal: ActiveModalKind;
   lastError: string | null;
 }
@@ -661,7 +667,7 @@ export const acpStore = {
     return autoTitleDepth > 0;
   },
 
-  addAttachment(att: ImageAttachment): void {
+  addAttachment(att: ComposerAttachment): void {
     state = { ...state, attachments: [...state.attachments, att] };
     emit();
   },
@@ -671,7 +677,7 @@ export const acpStore = {
     emit();
   },
 
-  consumeAttachments(): ImageAttachment[] {
+  consumeAttachments(): ComposerAttachment[] {
     const current = state.attachments;
     if (current.length > 0) {
       state = { ...state, attachments: [] };

@@ -4,6 +4,12 @@ import {
   ComposerConfigControls,
   ComposerContextUsageBadge,
 } from "@/components/ComposerControls";
+import {
+  classifyAttachmentKind,
+  formatFileSize,
+  inferMimeType,
+  MAX_ATTACHMENT_BYTES,
+} from "@/lib/acp/attachments";
 import type { AcpCommand, PendingPermissionRequest } from "@/lib/acp/types";
 import type { WorkspaceFileEntry } from "@/lib/acp/workspace";
 import {
@@ -18,7 +24,10 @@ import {
   ArrowUp,
   Check,
   FileCode2,
-  ImagePlus,
+  FileSpreadsheet,
+  FileText,
+  Image as ImageIcon,
+  Paperclip,
   ShieldAlert,
   Slash,
   Square,
@@ -33,6 +42,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
 } from "react";
 
@@ -94,6 +104,8 @@ export function AntigravityComposer({
   const [dismissedAtText, setDismissedAtText] = useState<string | null>(null);
   const [fileResults, setFileResults] = useState<WorkspaceFileEntry[]>([]);
   const [resolvingPermId, setResolvingPermId] = useState<string | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -242,7 +254,7 @@ export function AntigravityComposer({
     }
     void processMessage({
       role: "user",
-      content: trimmed || "Analyze the attached image(s).",
+      content: trimmed || "Analyze the attached file(s).",
     });
     setTextContent("");
     setDismissedAtText(null);
@@ -306,24 +318,71 @@ export function AntigravityComposer({
 
   const attachFiles = useCallback((files: FileList | File[] | null) => {
     if (!files) return;
+    setAttachmentError(null);
     for (const file of Array.from(files)) {
-      if (!file.type.startsWith("image/")) continue;
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setAttachmentError(
+          `"${file.name}" (${formatFileSize(file.size)}) exceeds the 10 MB per-file limit.`,
+        );
+        continue;
+      }
+      const mimeType = inferMimeType(file.name, file.type);
+      const kind = classifyAttachmentKind(file.name, mimeType);
       const reader = new FileReader();
-      reader.onload = () => {
-        const result = typeof reader.result === "string" ? reader.result : "";
-        const base64 = result.includes(",") ? result.split(",")[1] ?? "" : result;
-        if (base64) {
+
+      if (kind === "text") {
+        reader.onload = () => {
+          const text = typeof reader.result === "string" ? reader.result : "";
           acpStore.addAttachment({
             id: crypto.randomUUID(),
             name: file.name,
-            mimeType: file.type,
-            data: base64,
+            mimeType,
+            size: file.size,
+            kind: "text",
+            text,
           });
-        }
-      };
-      reader.readAsDataURL(file);
+        };
+        reader.readAsText(file);
+      } else {
+        reader.onload = () => {
+          const result = typeof reader.result === "string" ? reader.result : "";
+          const base64 = result.includes(",") ? result.split(",")[1] ?? "" : result;
+          if (base64) {
+            acpStore.addAttachment({
+              id: crypto.randomUUID(),
+              name: file.name,
+              mimeType,
+              size: file.size,
+              kind,
+              data: base64,
+            });
+          }
+        };
+        reader.readAsDataURL(file);
+      }
     }
   }, []);
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer?.types.includes("Files")) {
+      e.preventDefault();
+      if (!isDraggingFiles) setIsDraggingFiles(true);
+    }
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setIsDraggingFiles(false);
+    }
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      e.preventDefault();
+      setIsDraggingFiles(false);
+      attachFiles(e.dataTransfer.files);
+    }
+  };
 
   const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.files;
@@ -561,8 +620,13 @@ export function AntigravityComposer({
 
       {/* Main Composer Input Box */}
       <div
-        className="openui-agent-thread-composer"
+        className={`openui-agent-thread-composer ${
+          isDraggingFiles ? "ring-2 ring-blue-500/60 rounded-2xl" : ""
+        }`}
         data-drafting={textContent.length > 0 || undefined}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         onClick={(e) => {
           if (
             !(e.target as HTMLElement).closest(
@@ -573,24 +637,61 @@ export function AntigravityComposer({
           }
         }}
       >
+        {attachmentError && (
+          <div className="mx-3 mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-300">
+            <span>{attachmentError}</span>
+            <button
+              type="button"
+              aria-label="Dismiss attachment error"
+              onClick={() => setAttachmentError(null)}
+              className="opacity-70 hover:opacity-100"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-2">
-            {attachments.map((att) => (
-              <span
-                key={att.id}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-black/15 dark:border-white/15 px-2 py-1 text-xs"
-              >
-                <span className="max-w-[160px] truncate">{att.name}</span>
-                <button
-                  type="button"
-                  aria-label={`Remove ${att.name}`}
-                  onClick={() => acpStore.removeAttachment(att.id)}
-                  className="opacity-70 hover:opacity-100"
+            {attachments.map((att) => {
+              const lowerName = att.name.toLowerCase();
+              const isSheet =
+                lowerName.endsWith(".csv") ||
+                lowerName.endsWith(".tsv") ||
+                lowerName.endsWith(".xlsx") ||
+                lowerName.endsWith(".xls");
+              const sizeText = formatFileSize(att.size);
+              return (
+                <span
+                  key={att.id}
+                  title={`${att.name}${sizeText ? ` (${sizeText})` : ""}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-black/15 dark:border-white/15 bg-black/[0.02] dark:bg-white/[0.04] px-2 py-1 text-xs"
                 >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
+                  {att.kind === "image" ? (
+                    <ImageIcon className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden="true" />
+                  ) : isSheet ? (
+                    <FileSpreadsheet
+                      className="h-3.5 w-3.5 shrink-0 opacity-70"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden="true" />
+                  )}
+                  <span className="max-w-[160px] truncate">{att.name}</span>
+                  {sizeText && (
+                    <span className="text-[10px] opacity-55 tabular-nums">{sizeText}</span>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${att.name}`}
+                    onClick={() => acpStore.removeAttachment(att.id)}
+                    className="opacity-70 hover:opacity-100"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
 
@@ -628,7 +729,6 @@ export function AntigravityComposer({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
                 multiple
                 className="hidden"
                 onChange={(e) => {
@@ -638,11 +738,12 @@ export function AntigravityComposer({
               />
               <button
                 type="button"
-                aria-label="Attach image"
+                aria-label="Attach files"
+                title="Attach images, PDFs, CSVs, or other files"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex min-h-[28px] min-w-[28px] items-center justify-center rounded-lg border border-black/10 dark:border-white/10 px-2 py-1 opacity-75 hover:opacity-100"
+                className="inline-flex min-h-[28px] min-w-[28px] items-center justify-center rounded-lg border border-black/10 dark:border-white/10 px-2 py-1 opacity-75 hover:opacity-100 cursor-pointer"
               >
-                <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />
+                <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
 
               <ComposerConfigControls />

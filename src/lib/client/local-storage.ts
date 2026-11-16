@@ -197,7 +197,10 @@ export function createAntigravityChatBindings(): {
             attachments: attachments.map((a) => ({
               name: a.name,
               mimeType: a.mimeType,
+              size: a.size,
+              kind: a.kind,
               data: a.data,
+              text: a.text,
             })),
           });
         } catch {

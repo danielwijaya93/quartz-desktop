@@ -1,3 +1,8 @@
+import type { ComposerAttachmentPayload } from "@/lib/acp/attachments";
+import {
+  buildFallbackBlocksWithTempFiles,
+  buildPromptBlocksFromAttachments,
+} from "@/lib/acp/prompt-attachments";
 import {
   buildSessionSnapshot,
   cancelAcpTurn,
@@ -14,6 +19,7 @@ import {
 import * as acp from "@agentclientprotocol/sdk";
 import { EventType } from "@openuidev/react-headless";
 import type { NextRequest } from "next/server";
+import { promises as fs } from "node:fs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,7 +48,7 @@ interface ChatRequestBody {
   mode?: string;
   model?: string;
   thoughtLevel?: string;
-  attachments?: Array<{ name?: string; mimeType: string; data: string }>;
+  attachments?: ComposerAttachmentPayload[];
 }
 
 function sseLine(event: Record<string, unknown>): string {
@@ -125,13 +131,10 @@ export async function POST(req: NextRequest) {
 
   const lastUser = [...(body.messages ?? [])].reverse().find((m) => m.role === "user");
   const { text: userText, images: messageImages } = extractUserInput(lastUser);
-  const allImages = [
-    ...messageImages,
-    ...(body.attachments ?? []).map((a) => ({ mimeType: a.mimeType, data: a.data })),
-  ];
+  const fileAttachments = body.attachments ?? [];
   const trimmedText = userText.trim();
 
-  if (!trimmedText && allImages.length === 0) {
+  if (!trimmedText && messageImages.length === 0 && fileAttachments.length === 0) {
     return new Response(JSON.stringify({ error: "No user message provided." }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
@@ -405,27 +408,60 @@ export async function POST(req: NextRequest) {
       };
       req.signal.addEventListener("abort", onAbort);
 
+      const { blocks: attachmentBlocks, hasBinaryBlobs } =
+        buildPromptBlocksFromAttachments(fileAttachments);
       const promptBlocks: acp.ContentBlock[] = [];
       if (trimmedText) {
         promptBlocks.push({ type: "text", text: trimmedText });
       }
-      for (const img of allImages) {
+      for (const img of messageImages) {
         promptBlocks.push({
           type: "image",
           mimeType: img.mimeType,
           data: img.data,
         });
       }
+      promptBlocks.push(...attachmentBlocks);
 
       void (async () => {
+        let tempAttachmentDir: string | null = null;
         try {
-          const resp = await sessionEntry.connection.agent.request(
-            acp.AGENT_METHODS.session_prompt,
-            {
-              sessionId: sessionEntry.sessionId,
-              prompt: promptBlocks,
-            },
-          );
+          let resp;
+          try {
+            resp = await sessionEntry.connection.agent.request(
+              acp.AGENT_METHODS.session_prompt,
+              {
+                sessionId: sessionEntry.sessionId,
+                prompt: promptBlocks,
+              },
+            );
+          } catch (promptErr) {
+            if (!hasBinaryBlobs || req.signal.aborted) {
+              throw promptErr;
+            }
+            // Fallback for binary files (e.g. PDFs) if agent rejects inline BlobResourceContents
+            const fallback = await buildFallbackBlocksWithTempFiles(fileAttachments);
+            tempAttachmentDir = fallback.tempDir;
+            const fallbackPrompt: acp.ContentBlock[] = [];
+            if (trimmedText) {
+              fallbackPrompt.push({ type: "text", text: trimmedText });
+            }
+            for (const img of messageImages) {
+              fallbackPrompt.push({
+                type: "image",
+                mimeType: img.mimeType,
+                data: img.data,
+              });
+            }
+            fallbackPrompt.push(...fallback.blocks);
+            resp = await sessionEntry.connection.agent.request(
+              acp.AGENT_METHODS.session_prompt,
+              {
+                sessionId: sessionEntry.sessionId,
+                prompt: fallbackPrompt,
+              },
+            );
+          }
 
           closeThinking();
           // Ensure any pending interactive tools (e.g. ask_question) cleanly close at end_turn
@@ -493,6 +529,9 @@ export async function POST(req: NextRequest) {
             emit({ type: EventType.RUN_ERROR, message: msg });
           }
         } finally {
+          if (tempAttachmentDir) {
+            void fs.rm(tempAttachmentDir, { recursive: true, force: true }).catch(() => {});
+          }
           sessionEntry.isStreaming = false;
           sessionEntry.lastUsed = Date.now();
           sessionEntry.activeUpdateListener = undefined;
