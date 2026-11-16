@@ -23,7 +23,7 @@ import type {
   UserMessageAttachmentMeta,
 } from "@/lib/acp/types";
 import { isSyntheticTitleSession } from "@/lib/acp/thread-title";
-import { resolveAdditionalDirs, resolveWorkspaceDir } from "@/lib/acp/workspace";
+import { resolveAcpAdditionalDirs, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import { getOpenUISystemPrompt } from "@/lib/openui/prompt";
 import * as acp from "@agentclientprotocol/sdk";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -514,7 +514,7 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
   evictOldestIfFull();
 
   const cwd = resolveWorkspaceDir(options.cwd);
-  const additionalDirectories = resolveAdditionalDirs(options.additionalDirectories);
+  const additionalDirectories = resolveAcpAdditionalDirs(options.additionalDirectories);
   const mcpServers = options.mcpServers ?? [];
   const appDataDir = detectSessionAppDataDir(options.acpSessionId, options.appDataDir);
 
@@ -981,7 +981,7 @@ export async function loadHistoricalAcpSession(params: {
   }
 
   const cwd = resolveWorkspaceDir(params.cwd);
-  const additionalDirectories = resolveAdditionalDirs(params.additionalDirectories);
+  const additionalDirectories = resolveAcpAdditionalDirs(params.additionalDirectories);
   const mcpServers = params.mcpServers ?? [];
   const primaryStore = detectSessionAppDataDir(params.acpSessionId, params.appDataDir);
 

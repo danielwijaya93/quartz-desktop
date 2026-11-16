@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -46,6 +47,22 @@ export function resolveAdditionalDirs(dirs?: string[] | null): string[] {
     }
   }
   return resolved;
+}
+
+/**
+ * Resolves additional directories for `agy acp` sessions, automatically including
+ * `~/.pi/agent/prompts` when present so the `prompt-template` skill can read saved templates.
+ */
+export function resolveAcpAdditionalDirs(
+  dirs?: string[] | null,
+  homeDir = homedir(),
+): string[] {
+  const base = resolveAdditionalDirs(dirs);
+  const promptsDir = join(homeDir, ".pi", "agent", "prompts");
+  if (!base.includes(promptsDir) && existsSync(promptsDir) && statSync(promptsDir).isDirectory()) {
+    return [...base, promptsDir];
+  }
+  return base;
 }
 
 async function listDirFilesGit(root: string): Promise<string[] | null> {

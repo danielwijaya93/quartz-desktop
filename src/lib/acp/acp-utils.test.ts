@@ -3,6 +3,7 @@ import {
   convertReplayedUpdatesToMessages,
   detectSessionAppDataDir,
 } from "@/lib/acp/session-manager";
+import { resolveAcpAdditionalDirs } from "@/lib/acp/workspace";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -195,5 +196,15 @@ describe("detectSessionAppDataDir", () => {
     expect(detectSessionAppDataDir("sess-cli", undefined, home)).toBe("antigravity-cli");
     expect(detectSessionAppDataDir("sess-app", undefined, home)).toBe("antigravity");
     expect(detectSessionAppDataDir("sess-missing", "antigravity", home)).toBe("antigravity");
+  });
+
+  it("includes ~/.pi/agent/prompts in ACP additionalDirectories when present", () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-prompts-"));
+    tempRoots.push(home);
+    const promptsDir = join(home, ".pi", "agent", "prompts");
+    mkdirSync(promptsDir, { recursive: true });
+
+    expect(resolveAcpAdditionalDirs([], home)).toEqual([promptsDir]);
+    expect(resolveAcpAdditionalDirs([promptsDir], home)).toEqual([promptsDir]);
   });
 });
