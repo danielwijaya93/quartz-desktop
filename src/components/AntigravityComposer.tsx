@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  ComposerConfigControls,
+  ComposerContextUsageBadge,
+} from "@/components/ComposerControls";
 import type { AcpCommand, PendingPermissionRequest } from "@/lib/acp/types";
 import type { WorkspaceFileEntry } from "@/lib/acp/workspace";
 import {
@@ -17,9 +21,7 @@ import {
   ImagePlus,
   ShieldAlert,
   Slash,
-  Sparkles,
   Square,
-  Terminal,
   X,
 } from "lucide-react";
 import {
@@ -158,28 +160,6 @@ export function AntigravityComposer({
   useEffect(() => {
     setSelectedIndex(0);
   }, [autocomplete?.kind, autocomplete?.query, commandFilter]);
-
-  const openSlashMenu = useCallback(
-    (filter: "all" | "skill" | "commands") => {
-      if (autocomplete?.kind === "slash" && commandFilter === filter) {
-        setTextContent(textContent === "/" ? "" : textContent);
-        setDismissedAtText(textContent);
-        setCommandFilter("all");
-        return;
-      }
-      setCommandFilter(filter);
-      setDismissedAtText(null);
-      const nextText = textContent.startsWith("/") ? textContent : "/";
-      if (nextText !== textContent) {
-        setTextContent(nextText);
-      }
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-        setCaret(nextText.length);
-      });
-    },
-    [autocomplete?.kind, commandFilter, textContent],
-  );
 
   useLayoutEffect(() => {
     const el = inputRef.current;
@@ -372,8 +352,6 @@ export function AntigravityComposer({
       setResolvingPermId(null);
     }
   };
-
-  const isShellCommand = textContent.trimStart().startsWith("!");
 
   return (
     <div className="openui-agent-composer-slot flex flex-col gap-2">
@@ -586,7 +564,11 @@ export function AntigravityComposer({
         className="openui-agent-thread-composer"
         data-drafting={textContent.length > 0 || undefined}
         onClick={(e) => {
-          if (!(e.target as HTMLElement).closest("button, a, [role='button']")) {
+          if (
+            !(e.target as HTMLElement).closest(
+              "button, a, select, label, [role='button'], [data-composer-popover]",
+            )
+          ) {
             inputRef.current?.focus();
           }
         }}
@@ -642,7 +624,7 @@ export function AntigravityComposer({
           />
 
           <div className="openui-agent-thread-composer__action-bar flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-xs">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -663,59 +645,26 @@ export function AntigravityComposer({
                 <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
 
-              <button
-                type="button"
-                onClick={() => openSlashMenu("all")}
-                className="inline-flex min-h-[28px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/10 px-2 py-1 opacity-75 hover:opacity-100"
-              >
-                <Slash className="h-3 w-3" aria-hidden="true" />
-                <span>Commands</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => openSlashMenu("skill")}
-                className={`inline-flex min-h-[28px] items-center gap-1 rounded-lg border px-2 py-1 ${
-                  autocomplete?.kind === "slash" && commandFilter === "skill"
-                    ? "border-black/30 bg-black/10 dark:border-white/30 dark:bg-white/15 opacity-100"
-                    : "border-black/10 dark:border-white/10 opacity-75 hover:opacity-100"
-                }`}
-              >
-                <Sparkles className="h-3 w-3" aria-hidden="true" />
-                <span>Skills{skillCount > 0 ? ` (${skillCount})` : ""}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const next = textContent.startsWith("!") ? textContent : `!${textContent}`;
-                  setTextContent(next);
-                  requestAnimationFrame(() => inputRef.current?.focus());
-                }}
-                className={`inline-flex min-h-[28px] items-center gap-1 rounded-lg border px-2 py-1 ${
-                  isShellCommand
-                    ? "border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-300"
-                    : "border-black/10 dark:border-white/10 opacity-75 hover:opacity-100"
-                }`}
-              >
-                <Terminal className="h-3 w-3" aria-hidden="true" />
-                <span>Shell</span>
-              </button>
+              <ComposerConfigControls />
             </div>
 
-            <button
-              type="button"
-              onClick={isRunning ? cancelMessage : handleSubmit}
-              aria-label={isRunning ? "Cancel generation" : "Send message"}
-              className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black disabled:opacity-40"
-              disabled={!isRunning && !textContent.trim() && attachments.length === 0}
-            >
-              {isRunning ? (
-                <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-              ) : (
-                <ArrowUp className="h-4 w-4" aria-hidden="true" />
-              )}
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <ComposerContextUsageBadge />
+
+              <button
+                type="button"
+                onClick={isRunning ? cancelMessage : handleSubmit}
+                aria-label={isRunning ? "Cancel generation" : "Send message"}
+                className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black disabled:opacity-40"
+                disabled={!isRunning && !textContent.trim() && attachments.length === 0}
+              >
+                {isRunning ? (
+                  <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                ) : (
+                  <ArrowUp className="h-4 w-4" aria-hidden="true" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>

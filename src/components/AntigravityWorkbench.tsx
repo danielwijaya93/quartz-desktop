@@ -4,19 +4,15 @@ import "@openuidev/react-ui/styles/index.css";
 
 import { AntigravityAssistantMessage } from "@/components/AntigravityAssistantMessage";
 import { AntigravityComposer } from "@/components/AntigravityComposer";
-import {
-  AntigravityHeaderActions,
-  AntigravityHeaderControls,
-} from "@/components/AntigravityHeader";
 import { AntigravityDialogs } from "@/components/Dialogs";
 import { FolderSidebar } from "@/components/FolderSidebar";
 import { ThreadAutoRenamer } from "@/components/ThreadAutoRenamer";
-import { acpStore, useAcpStore } from "@/lib/client/acp-store";
+import { acpStore } from "@/lib/client/acp-store";
 import { createAntigravityChatBindings } from "@/lib/client/local-storage";
 import { useThread } from "@openuidev/react-headless";
 import { AgentInterface, useThemeModePreference } from "@openuidev/react-ui";
 import { openuiLibrary } from "@openuidev/react-ui/genui-lib";
-import { BarChart3, GitBranch, ListChecks, Sparkles } from "lucide-react";
+import { BarChart3, GitBranch, History, ListChecks, Sparkles } from "lucide-react";
 import { useEffect, useMemo } from "react";
 
 const STARTERS = [
@@ -82,7 +78,6 @@ function WelcomeHero() {
 
 export function AntigravityWorkbench() {
   const { mode, setPreference } = useThemeModePreference();
-  const preferredMode = useAcpStore((s) => s.preferredMode);
   const { llm, storage } = useMemo(() => createAntigravityChatBindings(), []);
 
   useEffect(() => {
@@ -110,6 +105,12 @@ export function AntigravityWorkbench() {
             <div className="openui-agent-sidebar-primary-actions">
               <AgentInterface.NewChatButton />
               <AgentInterface.HistoryButton />
+              <AgentInterface.SidebarItem
+                icon={<History size="1em" aria-hidden="true" />}
+                onClick={() => acpStore.setActiveModal("sessions")}
+              >
+                Sessions
+              </AgentInterface.SidebarItem>
               <AgentInterface.ArtifactNav className="openui-agent-sidebar-artifact-nav" />
             </div>
           </div>
@@ -119,19 +120,16 @@ export function AntigravityWorkbench() {
           </AgentInterface.SidebarContent>
 
           <AgentInterface.SidebarFooter>
-            <div className="flex w-full items-center justify-between px-1">
-              <span className="antigravity-sidebar-mode-label text-xs opacity-65">
-                ACP Mode: {preferredMode || "auto"}
-              </span>
+            <div className="flex w-full items-center justify-end px-1">
               <AgentInterface.ThemeModeToggle mode={mode} onModeChange={setPreference} />
             </div>
           </AgentInterface.SidebarFooter>
         </AgentInterface.Sidebar>
 
         <AgentInterface.ThreadHeader
-          start={<AntigravityHeaderControls />}
-          end={<AntigravityHeaderActions />}
+          className="!hidden"
           showChatTitle={false}
+          showChatActions={false}
         />
 
         <AgentInterface.Welcome>

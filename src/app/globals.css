@@ -16,12 +16,17 @@ dialog::backdrop {
   overscroll-behavior: contain;
 }
 
-.openui-agent-sidebar-container--collapsed .antigravity-sidebar-mode-label {
+.openui-agent-sidebar-content--collapsed {
+  visibility: hidden;
+}
+
+.openui-agent-thread-header {
   display: none;
 }
 
-.openui-agent-sidebar-content--collapsed {
-  visibility: hidden;
+.openui-agent-thread-container:not(:has(.openui-agent-welcome-screen))
+  .openui-agent-thread-scroll-area {
+  padding-top: var(--openui-space-l);
 }
 
 .openui-agent-thread-composer__input-wrapper.antigravity-composer-stack {
@@ -29,4 +34,28 @@ dialog::backdrop {
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
+  overflow: visible;
+}
+
+.antigravity-model-popover[popover] {
+  overscroll-behavior: contain;
+}
+
+@supports (position-area: block-start) {
+  .antigravity-model-popover[popover] {
+    inset: auto;
+    margin: 0 0 8px 0;
+    position-area: block-start span-inline-end;
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+  }
+}
+
+@supports not (position-area: block-start) {
+  .antigravity-model-popover[popover] {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    left: var(--ag-popover-left, 16px);
+    bottom: var(--ag-popover-bottom, 72px);
+  }
 }
