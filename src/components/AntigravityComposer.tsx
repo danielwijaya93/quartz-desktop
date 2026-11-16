@@ -6,6 +6,7 @@ import {
   acpStore,
   getActivePendingPermissions,
   getMergedSlashCommands,
+  selectEffectiveSnapshot,
   useAcpStore,
 } from "@/lib/client/acp-store";
 import { useThread, useThreadList } from "@openuidev/react-headless";
@@ -16,6 +17,7 @@ import {
   ImagePlus,
   ShieldAlert,
   Slash,
+  Sparkles,
   Square,
   Terminal,
   X,
@@ -72,8 +74,7 @@ export function AntigravityComposer({
   const selectedThreadId = useThreadList((s) => s.selectedThreadId);
   const switchToNewThread = useThreadList((s) => s.switchToNewThread);
 
-  const threadKey = selectedThreadId || "";
-  const snapshot = useAcpStore((s) => (threadKey ? s.snapshots[threadKey] : undefined));
+  const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
   const cwd = useAcpStore((s) => s.cwd);
   const additionalDirectories = useAcpStore((s) => s.additionalDirectories);
   const attachments = useAcpStore((s) => s.attachments);
@@ -87,6 +88,7 @@ export function AntigravityComposer({
 
   const [caret, setCaret] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [commandFilter, setCommandFilter] = useState<"all" | "skill" | "commands">("all");
   const [dismissedAtText, setDismissedAtText] = useState<string | null>(null);
   const [fileResults, setFileResults] = useState<WorkspaceFileEntry[]>([]);
   const [resolvingPermId, setResolvingPermId] = useState<string | null>(null);
@@ -100,18 +102,26 @@ export function AntigravityComposer({
     return detectAutocomplete(textContent, caret);
   }, [textContent, caret, dismissedAtText]);
 
+  const skillCount = useMemo(
+    () => commands.filter((c) => (c.category ?? "skill") === "skill").length,
+    [commands],
+  );
+
   const filteredCommands = useMemo(() => {
     if (autocomplete?.kind !== "slash") return [];
     const q = autocomplete.query.toLowerCase();
-    return commands
-      .filter(
-        (c) =>
-          !q ||
-          c.name.toLowerCase().includes(q) ||
-          c.description.toLowerCase().includes(q),
-      )
-      .slice(0, 12);
-  }, [autocomplete, commands]);
+    return commands.filter((c) => {
+      const cat = c.category ?? "skill";
+      if (commandFilter === "skill" && cat !== "skill") return false;
+      if (commandFilter === "commands" && cat === "skill") return false;
+      return (
+        !q ||
+        c.name.toLowerCase().includes(q) ||
+        c.description.toLowerCase().includes(q) ||
+        cat.toLowerCase().includes(q)
+      );
+    });
+  }, [autocomplete, commands, commandFilter]);
 
   useEffect(() => {
     if (autocomplete?.kind !== "file") {
@@ -147,7 +157,29 @@ export function AntigravityComposer({
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [autocomplete?.kind, autocomplete?.query]);
+  }, [autocomplete?.kind, autocomplete?.query, commandFilter]);
+
+  const openSlashMenu = useCallback(
+    (filter: "all" | "skill" | "commands") => {
+      if (autocomplete?.kind === "slash" && commandFilter === filter) {
+        setTextContent(textContent === "/" ? "" : textContent);
+        setDismissedAtText(textContent);
+        setCommandFilter("all");
+        return;
+      }
+      setCommandFilter(filter);
+      setDismissedAtText(null);
+      const nextText = textContent.startsWith("/") ? textContent : "/";
+      if (nextText !== textContent) {
+        setTextContent(nextText);
+      }
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        setCaret(nextText.length);
+      });
+    },
+    [autocomplete?.kind, commandFilter, textContent],
+  );
 
   useLayoutEffect(() => {
     const el = inputRef.current;
@@ -435,47 +467,92 @@ export function AntigravityComposer({
       ))}
 
       {/* Autocomplete Menu (Slash Commands / Skills / Files) */}
-      {autocomplete && activeItems.length > 0 && (
+      {autocomplete && (activeItems.length > 0 || autocomplete.kind === "slash") && (
         <div className="mx-auto w-full max-w-[760px] px-4">
-          <div
-            id={listboxId}
-            role="listbox"
-            aria-label={
-              autocomplete.kind === "slash" ? "Slash commands and skills" : "Workspace files"
-            }
-            className="max-h-64 overflow-y-auto rounded-xl border border-black/15 dark:border-white/15 bg-white dark:bg-zinc-900 p-1.5 shadow-xl"
-          >
-            {autocomplete.kind === "slash"
-              ? (activeItems as AcpCommand[]).map((cmd, idx) => {
-                  const active = idx === selectedIndex;
-                  return (
+          <div className="rounded-xl border border-black/15 dark:border-white/15 bg-white dark:bg-zinc-900 p-1.5 shadow-xl">
+            {autocomplete.kind === "slash" && (
+              <div className="mb-1 flex items-center justify-between gap-2 border-b border-black/10 dark:border-white/10 px-2 pb-1.5 text-[11px]">
+                <div className="flex items-center gap-1">
+                  {(
+                    [
+                      { id: "all", label: `All (${commands.length})` },
+                      { id: "skill", label: `Skills (${skillCount})` },
+                      { id: "commands", label: `Commands (${commands.length - skillCount})` },
+                    ] as const
+                  ).map((tab) => (
                     <button
-                      key={cmd.name}
+                      key={tab.id}
                       type="button"
-                      role="option"
-                      aria-selected={active}
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        handleSelectCommand(cmd);
+                        setCommandFilter(tab.id);
                       }}
-                      className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors ${
-                        active
-                          ? "bg-black/10 dark:bg-white/15"
-                          : "hover:bg-black/5 dark:hover:bg-white/10"
+                      className={`rounded-md px-2 py-0.5 font-medium transition-colors ${
+                        commandFilter === tab.id
+                          ? "bg-black text-white dark:bg-white dark:text-black"
+                          : "opacity-70 hover:bg-black/5 dark:hover:bg-white/10 hover:opacity-100"
                       }`}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Slash className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
-                        <span className="font-mono font-semibold">/{cmd.name}</span>
-                        <span className="truncate opacity-70">{cmd.description}</span>
-                      </div>
-                      <span className="shrink-0 rounded-md border border-black/10 dark:border-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider opacity-75">
-                        {cmd.category ?? "skill"}
-                      </span>
+                      {tab.label}
                     </button>
-                  );
-                })
-              : (activeItems as WorkspaceFileEntry[]).map((file, idx) => {
+                  ))}
+                </div>
+                <span className="opacity-55">
+                  {filteredCommands.length} shown
+                </span>
+              </div>
+            )}
+
+            <div
+              id={listboxId}
+              role="listbox"
+              aria-label={
+                autocomplete.kind === "slash" ? "Slash commands and skills" : "Workspace files"
+              }
+              className="max-h-64 overflow-y-auto"
+            >
+              {autocomplete.kind === "slash" ? (
+                filteredCommands.length > 0 ? (
+                  (activeItems as AcpCommand[]).map((cmd, idx) => {
+                    const active = idx === selectedIndex;
+                    return (
+                      <button
+                        key={cmd.name}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setCommandFilter("all");
+                          handleSelectCommand(cmd);
+                        }}
+                        className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors ${
+                          active
+                            ? "bg-black/10 dark:bg-white/15"
+                            : "hover:bg-black/5 dark:hover:bg-white/10"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Slash className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
+                          <span className="shrink-0 whitespace-nowrap font-mono font-semibold">
+                            /{cmd.name}
+                          </span>
+                          <span className="truncate opacity-70">{cmd.description}</span>
+                        </div>
+                        <span className="shrink-0 rounded-md border border-black/10 dark:border-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider opacity-75">
+                          {cmd.category ?? "skill"}
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="px-2.5 py-3 text-center text-xs opacity-60">
+                    No matching items
+                    {commandFilter !== "all" ? " in this tab" : ""}.
+                  </div>
+                )
+              ) : (
+                (activeItems as WorkspaceFileEntry[]).map((file, idx) => {
                   const active = idx === selectedIndex;
                   return (
                     <button
@@ -497,7 +574,9 @@ export function AntigravityComposer({
                       <span className="truncate font-mono">{file.label}</span>
                     </button>
                   );
-                })}
+                })
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -541,12 +620,20 @@ export function AntigravityComposer({
             placeholder={placeholder}
             aria-label="Message input"
             aria-autocomplete="list"
-            aria-controls={activeItems.length > 0 ? listboxId : undefined}
+            aria-controls={
+              autocomplete && (activeItems.length > 0 || autocomplete.kind === "slash")
+                ? listboxId
+                : undefined
+            }
             className="openui-agent-thread-composer__input"
             onChange={(e) => {
-              setTextContent(e.target.value);
-              setCaret(e.target.selectionStart ?? e.target.value.length);
+              const nextVal = e.target.value;
+              setTextContent(nextVal);
+              setCaret(e.target.selectionStart ?? nextVal.length);
               setDismissedAtText(null);
+              if (!nextVal.startsWith("/")) {
+                setCommandFilter("all");
+              }
             }}
             onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
             onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
@@ -578,23 +665,24 @@ export function AntigravityComposer({
 
               <button
                 type="button"
-                onClick={() => {
-                  if (autocomplete?.kind === "slash") {
-                    setTextContent(textContent === "/" ? "" : textContent);
-                    setDismissedAtText(textContent);
-                  } else {
-                    setTextContent("/");
-                    setDismissedAtText(null);
-                    requestAnimationFrame(() => {
-                      inputRef.current?.focus();
-                      setCaret(1);
-                    });
-                  }
-                }}
+                onClick={() => openSlashMenu("all")}
                 className="inline-flex min-h-[28px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/10 px-2 py-1 opacity-75 hover:opacity-100"
               >
                 <Slash className="h-3 w-3" aria-hidden="true" />
                 <span>Commands</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openSlashMenu("skill")}
+                className={`inline-flex min-h-[28px] items-center gap-1 rounded-lg border px-2 py-1 ${
+                  autocomplete?.kind === "slash" && commandFilter === "skill"
+                    ? "border-black/30 bg-black/10 dark:border-white/30 dark:bg-white/15 opacity-100"
+                    : "border-black/10 dark:border-white/10 opacity-75 hover:opacity-100"
+                }`}
+              >
+                <Sparkles className="h-3 w-3" aria-hidden="true" />
+                <span>Skills{skillCount > 0 ? ` (${skillCount})` : ""}</span>
               </button>
 
               <button

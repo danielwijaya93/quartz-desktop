@@ -1,7 +1,7 @@
 "use client";
 
 import type { AcpConfigOption, AcpSessionSnapshot } from "@/lib/acp/types";
-import { acpStore, useAcpStore } from "@/lib/client/acp-store";
+import { acpStore, selectEffectiveSnapshot, useAcpStore } from "@/lib/client/acp-store";
 import { useThreadList } from "@openuidev/react-headless";
 import { FolderGit2, History, Plug, Shield } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -43,15 +43,12 @@ export function AntigravityHeaderControls() {
   const selectedThreadId = useThreadList((s) => s.selectedThreadId);
   const effectiveThreadId = selectedThreadId || "bootstrap";
 
-  const snapshots = useAcpStore((s) => s.snapshots);
+  const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
   const preferredModel = useAcpStore((s) => s.preferredModel);
   const preferredThoughtLevel = useAcpStore((s) => s.preferredThoughtLevel);
   const preferredMode = useAcpStore((s) => s.preferredMode);
   const acpSessionIds = useAcpStore((s) => s.acpSessionIds);
-
   const [updatingConfig, setUpdatingConfig] = useState<string | null>(null);
-
-  const snapshot = snapshots[effectiveThreadId] ?? snapshots.bootstrap;
 
   // Pre-warm ACP metadata (slash commands, skills, models, modes, tier) on mount / thread change
   useEffect(() => {
@@ -195,14 +192,11 @@ export function AntigravityHeaderControls() {
 
 export function AntigravityHeaderActions() {
   const selectedThreadId = useThreadList((s) => s.selectedThreadId);
-  const effectiveThreadId = selectedThreadId || "bootstrap";
 
-  const snapshots = useAcpStore((s) => s.snapshots);
+  const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
   const cwd = useAcpStore((s) => s.cwd);
   const additionalDirectories = useAcpStore((s) => s.additionalDirectories);
   const [mcpCount, setMcpCount] = useState<number | null>(null);
-
-  const snapshot = snapshots[effectiveThreadId] ?? snapshots.bootstrap;
 
   useEffect(() => {
     fetch("/api/mcp")

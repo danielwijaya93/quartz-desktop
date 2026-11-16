@@ -292,6 +292,16 @@ export function useAcpStore<T>(selector: (s: AcpClientState) => T): T {
   );
 }
 
+export function selectEffectiveSnapshot(
+  state: AcpClientState,
+  selectedThreadId: string | null | undefined,
+): AcpSessionSnapshot | undefined {
+  if (selectedThreadId && state.snapshots[selectedThreadId]) {
+    return state.snapshots[selectedThreadId];
+  }
+  return state.snapshots.bootstrap;
+}
+
 export function getMergedSlashCommands(snapshot?: AcpSessionSnapshot): AcpCommand[] {
   const byName = new Map<string, AcpCommand>();
   for (const cmd of DEFAULT_CLI_COMMANDS) {
