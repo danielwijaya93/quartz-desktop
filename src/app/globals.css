@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-openui-theme="dark"], [data-openui-theme="dark"] *));
+
+:root {
+  color-scheme: light dark;
+}
+
+/* Stop scroll gestures over the modal or backdrop from chaining to the background */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.openui-agent-sidebar-container--collapsed .antigravity-sidebar-mode-label {
+  display: none;
+}
+
+.openui-agent-thread-composer__input-wrapper.antigravity-composer-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
