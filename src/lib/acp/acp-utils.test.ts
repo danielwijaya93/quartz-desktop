@@ -110,6 +110,65 @@ describe("convertReplayedUpdatesToMessages", () => {
     });
     expect(messages[3]?.content).toBe("Checking README first.");
   });
+
+  it("extracts attachment metadata onto user messages when replaying resource and image chunks", () => {
+    const messages = convertReplayedUpdatesToMessages([
+      {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "Run stock market recap" },
+      },
+      {
+        sessionUpdate: "user_message_chunk",
+        content: {
+          type: "resource",
+          resource: {
+            uri: "attachment:///market_data.csv",
+            mimeType: "text/csv",
+            text: "ticker,price\nSPY,745.71\n",
+          },
+        },
+      },
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toBe("Run stock market recap");
+    expect(messages[0]?.attachments).toEqual([
+      expect.objectContaining({
+        name: "market_data.csv",
+        mimeType: "text/csv",
+        kind: "text",
+      }),
+    ]);
+  });
+
+  it("strips ACP serialized Content of attachment:/// text blocks into attachment chips", () => {
+    const messages = convertReplayedUpdatesToMessages([
+      {
+        sessionUpdate: "user_message_chunk",
+        content: {
+          type: "text",
+          text: "Attached is the refreshed intraday data, any update?",
+        },
+      },
+      {
+        sessionUpdate: "user_message_chunk",
+        content: {
+          type: "text",
+          text: "Content of attachment:///2026-11-16T16-13_export.csv:\nTicker,Close\nSPY,746.36\n",
+        },
+      },
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toBe("Attached is the refreshed intraday data, any update?");
+    expect(messages[0]?.attachments).toEqual([
+      expect.objectContaining({
+        name: "2026-11-16T16-13_export.csv",
+        mimeType: "text/csv",
+        kind: "text",
+      }),
+    ]);
+  });
 });
 
 describe("detectSessionAppDataDir", () => {

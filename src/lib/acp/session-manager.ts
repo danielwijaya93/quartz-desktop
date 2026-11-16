@@ -1,3 +1,8 @@
+import {
+  classifyAttachmentKind,
+  extractInlineAttachmentsFromText,
+  inferMimeType,
+} from "@/lib/acp/attachments";
 import type {
   AcpAppDataDir,
   AcpCommand,
@@ -14,6 +19,7 @@ import type {
   HistoricalAcpSession,
   PendingPermissionRequest,
   ReplayedTranscriptMessage,
+  UserMessageAttachmentMeta,
 } from "@/lib/acp/types";
 import { isSyntheticTitleSession } from "@/lib/acp/thread-title";
 import { resolveAdditionalDirs, resolveWorkspaceDir } from "@/lib/acp/workspace";
@@ -1050,6 +1056,53 @@ function extractContentBlockText(block: acp.ContentBlock | undefined | null): st
   }
 }
 
+function extractUserAttachmentFromBlock(
+  block: acp.ContentBlock | undefined | null,
+): UserMessageAttachmentMeta | null {
+  if (!block) return null;
+  if (block.type === "image") {
+    return {
+      id: crypto.randomUUID(),
+      name: "Attached image",
+      mimeType: block.mimeType,
+      kind: "image",
+      data: block.data,
+    };
+  }
+  if (block.type === "resource_link") {
+    const rawName = block.name || decodeURIComponent(block.uri.split("/").pop() || "file");
+    const mimeType = inferMimeType(rawName, block.mimeType ?? undefined);
+    return {
+      id: crypto.randomUUID(),
+      name: rawName,
+      mimeType,
+      size: typeof block.size === "number" ? block.size : undefined,
+      kind: classifyAttachmentKind(rawName, mimeType),
+    };
+  }
+  if (block.type === "resource") {
+    const rawUri = block.resource.uri || "";
+    const decoded = decodeURIComponent(
+      rawUri.replace(/^attachment:\/\/\//, "").split("/").pop() || "file",
+    );
+    const mimeType = inferMimeType(decoded, block.resource.mimeType ?? undefined);
+    const size =
+      "text" in block.resource && typeof block.resource.text === "string"
+        ? Buffer.byteLength(block.resource.text, "utf8")
+        : "blob" in block.resource && typeof block.resource.blob === "string"
+          ? Math.floor((block.resource.blob.length * 3) / 4)
+          : undefined;
+    return {
+      id: crypto.randomUUID(),
+      name: decoded,
+      mimeType,
+      size,
+      kind: classifyAttachmentKind(decoded, mimeType),
+    };
+  }
+  return null;
+}
+
 export function convertReplayedUpdatesToMessages(
   updates: acp.SessionUpdate[],
 ): ReplayedTranscriptMessage[] {
@@ -1064,7 +1117,24 @@ export function convertReplayedUpdatesToMessages(
   >();
 
   const flushUser = () => {
-    if (currentUser && currentUser.content) {
+    if (!currentUser) return;
+    const { cleanText, attachments: inlineAttachments } = extractInlineAttachmentsFromText(
+      currentUser.content,
+    );
+    if (inlineAttachments.length > 0) {
+      const existing = currentUser.attachments ?? [];
+      const seenNames = new Set(existing.map((a) => a.name));
+      const merged = [
+        ...existing,
+        ...inlineAttachments.filter((a) => !seenNames.has(a.name)),
+      ];
+      currentUser = {
+        ...currentUser,
+        content: cleanText,
+        attachments: merged,
+      };
+    }
+    if (currentUser.content || currentUser.attachments?.length) {
       messages.push(currentUser);
     }
     currentUser = null;
@@ -1121,11 +1191,15 @@ export function convertReplayedUpdatesToMessages(
   for (const update of updates) {
     if (update.sessionUpdate === "user_message_chunk") {
       finalizeAssistantTurn();
-      const text = extractContentBlockText(update.content);
       if (!currentUser) {
         currentUser = { id: crypto.randomUUID(), role: "user", content: "" };
       }
-      currentUser.content += text;
+      const att = extractUserAttachmentFromBlock(update.content);
+      if (att) {
+        currentUser.attachments = [...(currentUser.attachments ?? []), att];
+      } else {
+        currentUser.content += extractContentBlockText(update.content);
+      }
     } else if (update.sessionUpdate === "agent_message_chunk") {
       flushUser();
       const text = extractContentBlockText(update.content);

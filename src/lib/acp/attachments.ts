@@ -137,3 +137,104 @@ export function formatFileSize(bytes?: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+export interface ExtractedInlineAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+  kind: AttachmentKind;
+}
+
+const CONTENT_MARKER_RE = /Content of attachment:\/\/\/([^\r\n:]+):(?:\r?\n)?/g;
+const SAVED_MARKER_RE =
+  /\[Attached file saved for inspection:\s*[^\n()[\]]+\s*\(([^,()]+),\s*([^()]+)\)\]/g;
+
+function safeDecodeName(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Extracts inline ACP-replayed attachment blocks (`Content of attachment:///...:\n...`
+ * or `[Attached file saved for inspection: ...]`) from user message text so the UI renders
+ * compact file chips instead of raw file contents.
+ */
+export function extractInlineAttachmentsFromText(rawText: string): {
+  cleanText: string;
+  attachments: ExtractedInlineAttachment[];
+} {
+  if (
+    !rawText ||
+    (!rawText.includes("Content of attachment:///") &&
+      !rawText.includes("[Attached file saved for inspection:"))
+  ) {
+    return { cleanText: rawText, attachments: [] };
+  }
+
+  type Marker =
+    | { kind: "content"; index: number; end: number; rawName: string }
+    | { kind: "saved"; index: number; end: number; name: string; mimeType: string };
+
+  const markers: Marker[] = [];
+  for (const m of rawText.matchAll(CONTENT_MARKER_RE)) {
+    if (m.index !== undefined) {
+      markers.push({
+        kind: "content",
+        index: m.index,
+        end: m.index + m[0].length,
+        rawName: m[1] ?? "attachment",
+      });
+    }
+  }
+  for (const m of rawText.matchAll(SAVED_MARKER_RE)) {
+    if (m.index !== undefined) {
+      markers.push({
+        kind: "saved",
+        index: m.index,
+        end: m.index + m[0].length,
+        name: (m[1] ?? "attachment").trim(),
+        mimeType: (m[2] ?? "").trim(),
+      });
+    }
+  }
+
+  if (markers.length === 0) {
+    return { cleanText: rawText, attachments: [] };
+  }
+
+  markers.sort((a, b) => a.index - b.index);
+  const cleanText = rawText.slice(0, markers[0]!.index).trimEnd();
+  const encoder = new TextEncoder();
+  const attachments: ExtractedInlineAttachment[] = [];
+
+  for (let i = 0; i < markers.length; i += 1) {
+    const marker = markers[i]!;
+    if (marker.kind === "content") {
+      const nextIndex = markers[i + 1]?.index ?? rawText.length;
+      const body = rawText.slice(marker.end, nextIndex);
+      const name = safeDecodeName(marker.rawName);
+      const mimeType = inferMimeType(name);
+      attachments.push({
+        id: `inline-${i}-${name}`,
+        name,
+        mimeType,
+        size: encoder.encode(body).length,
+        kind: classifyAttachmentKind(name, mimeType),
+      });
+    } else {
+      const mimeType = inferMimeType(marker.name, marker.mimeType);
+      attachments.push({
+        id: `saved-${i}-${marker.name}`,
+        name: marker.name,
+        mimeType,
+        kind: classifyAttachmentKind(marker.name, mimeType),
+      });
+    }
+  }
+
+  return { cleanText, attachments };
+}

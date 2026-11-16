@@ -4,6 +4,7 @@ import "@openuidev/react-ui/styles/index.css";
 
 import { AntigravityAssistantMessage } from "@/components/AntigravityAssistantMessage";
 import { AntigravityComposer } from "@/components/AntigravityComposer";
+import { AntigravityUserMessage } from "@/components/AntigravityUserMessage";
 import { AntigravityDialogs } from "@/components/Dialogs";
 import { FolderSidebar } from "@/components/FolderSidebar";
 import { ThreadAutoRenamer } from "@/components/ThreadAutoRenamer";
@@ -95,7 +96,10 @@ export function AntigravityWorkbench() {
         llm={llm}
         storage={storage}
         componentLibrary={openuiLibrary}
-        components={{ AssistantMessage: AntigravityAssistantMessage }}
+        components={{
+          AssistantMessage: AntigravityAssistantMessage,
+          UserMessage: AntigravityUserMessage,
+        }}
         agentName="Antigravity GenUI"
         theme={{ mode }}
       >

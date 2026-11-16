@@ -10,7 +10,11 @@ import {
   inferMimeType,
   MAX_ATTACHMENT_BYTES,
 } from "@/lib/acp/attachments";
-import type { AcpCommand, PendingPermissionRequest } from "@/lib/acp/types";
+import type {
+  AcpCommand,
+  PendingPermissionRequest,
+  UserMessageAttachmentMeta,
+} from "@/lib/acp/types";
 import type { WorkspaceFileEntry } from "@/lib/acp/workspace";
 import {
   acpStore,
@@ -252,15 +256,24 @@ export function AntigravityComposer({
     if (executeLocalAppCommand(trimmed)) {
       return;
     }
+    const messageAttachments: UserMessageAttachmentMeta[] = attachments.map((att) => ({
+      id: att.id,
+      name: att.name,
+      mimeType: att.mimeType,
+      size: att.size,
+      kind: att.kind,
+      ...(att.kind === "image" && att.data ? { data: att.data } : {}),
+    }));
     void processMessage({
       role: "user",
       content: trimmed || "Analyze the attached file(s).",
-    });
+      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+    } as Parameters<typeof processMessage>[0]);
     setTextContent("");
     setDismissedAtText(null);
   }, [
     textContent,
-    attachments.length,
+    attachments,
     isRunning,
     isLoadingMessages,
     executeLocalAppCommand,

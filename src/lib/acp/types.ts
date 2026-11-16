@@ -132,6 +132,17 @@ export interface GlobalMcpServerInfo {
   target: string;
 }
 
+import type { AttachmentKind } from "@/lib/acp/attachments";
+
+export interface UserMessageAttachmentMeta {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+  kind: AttachmentKind;
+  data?: string;
+}
+
 export interface AskQuestionEntry {
   question: string;
   options: string[];
@@ -142,6 +153,7 @@ export interface ReplayedTranscriptMessage {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  attachments?: UserMessageAttachmentMeta[];
   toolCallId?: string;
   toolCalls?: Array<{
     id: string;
