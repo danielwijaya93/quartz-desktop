@@ -1,10 +1,11 @@
 import type { AcpSessionSnapshot } from "@/lib/acp/types";
 import {
+  acpStore,
   getMergedSlashCommands,
   selectEffectiveSnapshot,
   type AcpClientState,
 } from "@/lib/client/acp-store";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 function makeSnapshot(threadId: string, overrides: Partial<AcpSessionSnapshot> = {}): AcpSessionSnapshot {
   return {
@@ -23,6 +24,7 @@ function makeSnapshot(threadId: string, overrides: Partial<AcpSessionSnapshot> =
 
 function makeState(snapshots: Record<string, AcpSessionSnapshot>): AcpClientState {
   return {
+    hydrated: false,
     cwd: "/workspace",
     additionalDirectories: [],
     sessionMcpServers: [],
@@ -87,5 +89,38 @@ describe("getMergedSlashCommands", () => {
     expect(names).toContain("antigravity-guide");
     expect(names).toContain("goal");
     expect(names).toContain("mcp");
+  });
+});
+
+describe("acpStore hydration", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("starts with SSR-safe defaults and loads persisted prefs only on hydrateFromStorage", () => {
+    expect(acpStore.getState().hydrated).toBe(false);
+    expect(acpStore.getState().cwd).toBe("");
+
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => {
+        if (key === "agy-openui:workspace-prefs") {
+          return JSON.stringify({
+            cwd: "/home/danielwijaya",
+            additionalDirectories: ["/tmp/extra"],
+            preferredMode: "plan",
+          });
+        }
+        return null;
+      },
+      setItem: () => {},
+    });
+
+    acpStore.hydrateFromStorage();
+
+    expect(acpStore.getState().hydrated).toBe(true);
+    expect(acpStore.getState().cwd).toBe("/home/danielwijaya");
+    expect(acpStore.getState().additionalDirectories).toEqual(["/tmp/extra"]);
+    expect(acpStore.getState().preferredMode).toBe("plan");
   });
 });

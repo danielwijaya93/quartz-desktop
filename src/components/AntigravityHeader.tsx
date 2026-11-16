@@ -44,14 +44,19 @@ export function AntigravityHeaderControls() {
   const effectiveThreadId = selectedThreadId || "bootstrap";
 
   const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
+  const hydrated = useAcpStore((s) => s.hydrated);
   const preferredModel = useAcpStore((s) => s.preferredModel);
   const preferredThoughtLevel = useAcpStore((s) => s.preferredThoughtLevel);
   const preferredMode = useAcpStore((s) => s.preferredMode);
-  const acpSessionIds = useAcpStore((s) => s.acpSessionIds);
   const [updatingConfig, setUpdatingConfig] = useState<string | null>(null);
 
-  // Pre-warm ACP metadata (slash commands, skills, models, modes, tier) on mount / thread change
+  // Pre-warm ACP metadata (slash commands, skills, models, modes, tier) after storage hydration
   useEffect(() => {
+    if (!hydrated) {
+      acpStore.hydrateFromStorage();
+      return;
+    }
+
     let cancelled = false;
     const state = acpStore.getState();
     const existingSnapshot = state.snapshots[effectiveThreadId];
@@ -83,7 +88,7 @@ export function AntigravityHeaderControls() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveThreadId, acpSessionIds]);
+  }, [effectiveThreadId, hydrated]);
 
   const modelOption = findOption(snapshot, "model");
   const thoughtOption = findOption(snapshot, "thought_level");

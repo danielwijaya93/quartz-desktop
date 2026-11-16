@@ -9,7 +9,7 @@ import {
   AntigravityHeaderControls,
 } from "@/components/AntigravityHeader";
 import { AntigravityDialogs } from "@/components/Dialogs";
-import { useAcpStore } from "@/lib/client/acp-store";
+import { acpStore, useAcpStore } from "@/lib/client/acp-store";
 import { createAntigravityChatBindings } from "@/lib/client/local-storage";
 import { useThread } from "@openuidev/react-headless";
 import { AgentInterface, useThemeModePreference } from "@openuidev/react-ui";
@@ -82,6 +82,10 @@ export function AntigravityWorkbench() {
   const { mode, setPreference } = useThemeModePreference();
   const preferredMode = useAcpStore((s) => s.preferredMode);
   const { llm, storage } = useMemo(() => createAntigravityChatBindings(), []);
+
+  useEffect(() => {
+    acpStore.hydrateFromStorage();
+  }, []);
 
   useEffect(() => {
     document.documentElement.style.colorScheme = mode;

@@ -59,6 +59,7 @@ export const DEFAULT_CLI_COMMANDS: AcpCommand[] = [
 ];
 
 export interface AcpClientState {
+  hydrated: boolean;
   cwd: string;
   additionalDirectories: string[];
   sessionMcpServers: AcpSessionMcpServer[];
@@ -99,7 +100,10 @@ function loadInitialPrefs(): Partial<AcpClientState> {
   }
 }
 
-let state: AcpClientState = {
+// Keep initial state identical on SSR and initial client render to avoid hydration mismatches;
+// persisted localStorage prefs are loaded post-mount via acpStore.hydrateFromStorage().
+const INITIAL_STATE: AcpClientState = {
+  hydrated: false,
   cwd: "",
   additionalDirectories: [],
   sessionMcpServers: [],
@@ -111,8 +115,9 @@ let state: AcpClientState = {
   attachments: [],
   activeModal: null,
   lastError: null,
-  ...loadInitialPrefs(),
 };
+
+let state: AcpClientState = INITIAL_STATE;
 
 const listeners = new Set<() => void>();
 
@@ -150,6 +155,18 @@ export const acpStore = {
   subscribe(listener: () => void): () => void {
     listeners.add(listener);
     return () => listeners.delete(listener);
+  },
+
+  hydrateFromStorage(): void {
+    if (state.hydrated || typeof window === "undefined") return;
+    const prefs = loadInitialPrefs();
+    state = {
+      ...state,
+      ...prefs,
+      hydrated: true,
+      acpSessionIds: { ...prefs.acpSessionIds, ...state.acpSessionIds },
+    };
+    emit();
   },
 
   setSnapshot(threadId: string, snapshot: AcpSessionSnapshot): void {
@@ -288,7 +305,7 @@ export function useAcpStore<T>(selector: (s: AcpClientState) => T): T {
   return useSyncExternalStore(
     acpStore.subscribe,
     () => selector(acpStore.getState()),
-    () => selector(acpStore.getState()),
+    () => selector(INITIAL_STATE),
   );
 }
 
