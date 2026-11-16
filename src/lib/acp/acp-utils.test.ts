@@ -1,6 +1,12 @@
 import { parseAgyMcpListOutput } from "@/lib/acp/mcp-cli";
-import { convertReplayedUpdatesToMessages } from "@/lib/acp/session-manager";
-import { describe, expect, it } from "vitest";
+import {
+  convertReplayedUpdatesToMessages,
+  detectSessionAppDataDir,
+} from "@/lib/acp/session-manager";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 describe("parseAgyMcpListOutput", () => {
   it("parses agy mcp list stdout into structured servers", () => {
@@ -68,5 +74,67 @@ describe("convertReplayedUpdatesToMessages", () => {
       role: "assistant",
       content: "root = Stack([c])\nc = Card([])",
     });
+  });
+
+  it("handles tool_call_update, content outputs, and pre-tool prose cleanly", () => {
+    const messages = convertReplayedUpdatesToMessages([
+      {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "Inspect repo" },
+      },
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Checking README first." },
+      },
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "tc-upd",
+        title: "read_file",
+        status: "in_progress",
+        rawInput: { Path: "README.md" },
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tc-upd",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "# Readme Content" } }],
+      },
+    ]);
+
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+    expect(messages[1]?.toolCalls?.[0]?.id).toBe("tc-upd");
+    expect(messages[2]).toMatchObject({
+      role: "tool",
+      toolCallId: "tc-upd",
+      content: "# Readme Content",
+    });
+    expect(messages[3]?.content).toBe("Checking README first.");
+  });
+});
+
+describe("detectSessionAppDataDir", () => {
+  const tempRoots: string[] = [];
+
+  afterEach(() => {
+    while (tempRoots.length > 0) {
+      rmSync(tempRoots.pop()!, { recursive: true, force: true });
+    }
+  });
+
+  it("detects Antigravity App vs CLI conversation stores from .db files", () => {
+    const home = mkdtempSync(join(tmpdir(), "agy-appdir-"));
+    tempRoots.push(home);
+
+    const cliDir = join(home, ".gemini", "antigravity-cli", "conversations");
+    const appDir = join(home, ".gemini", "antigravity", "conversations");
+    mkdirSync(cliDir, { recursive: true });
+    mkdirSync(appDir, { recursive: true });
+
+    writeFileSync(join(cliDir, "sess-cli.db"), "");
+    writeFileSync(join(appDir, "sess-app.db"), "");
+
+    expect(detectSessionAppDataDir("sess-cli", undefined, home)).toBe("antigravity-cli");
+    expect(detectSessionAppDataDir("sess-app", undefined, home)).toBe("antigravity");
+    expect(detectSessionAppDataDir("sess-missing", "antigravity", home)).toBe("antigravity");
   });
 });

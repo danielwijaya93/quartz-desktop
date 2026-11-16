@@ -716,6 +716,7 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
           action: "loadSession",
           threadId,
           acpSessionId: s.sessionId,
+          appDataDir: s.appDataDir,
           cwd: s.cwd,
           additionalDirectories: s.additionalDirectories,
           mcpServers: acpStore.getState().sessionMcpServers,
@@ -729,7 +730,7 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
       if (!res.ok || !data.snapshot) {
         throw new Error(data.error ?? "Failed to resume session");
       }
-      importReplayedSessionToStorage({
+      await importReplayedSessionToStorage({
         threadId,
         title: s.title ?? "Resumed Session",
         snapshot: data.snapshot,
@@ -797,7 +798,14 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
                   className="flex items-center justify-between gap-3 rounded-xl border border-black/10 dark:border-white/10 px-3 py-2.5"
                 >
                   <div className="min-w-0">
-                    <div className="truncate font-medium">{s.title || "Untitled Session"}</div>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="truncate font-medium">{s.title || "Untitled Session"}</span>
+                      {s.appDataDir && (
+                        <span className="shrink-0 rounded border border-black/10 dark:border-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider opacity-70">
+                          {s.appDataDir === "antigravity" ? "App" : "CLI"}
+                        </span>
+                      )}
+                    </div>
                     <div className="truncate font-mono text-[11px] opacity-65">
                       {s.cwd} • {s.updatedAt ? new Date(s.updatedAt).toLocaleString() : s.sessionId}
                     </div>

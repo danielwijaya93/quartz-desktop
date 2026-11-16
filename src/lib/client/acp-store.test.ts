@@ -43,6 +43,10 @@ function makeState(
     preferredThoughtLevel: "",
     snapshots,
     acpSessionIds: {},
+    appDataDirs: {},
+    pendingAutoTitleIds: [],
+    autoTitledThreadIds: [],
+    manuallyRenamedThreadIds: [],
     attachments: [],
     activeModal: null,
     lastError: null,
@@ -195,5 +199,25 @@ describe("acpStore hydration and folder lifecycle", () => {
     expect(acpStore.getState().hiddenThreadIds).toContain("thread-a");
     expect(acpStore.getState().activeFolderId).toBe("default");
     expect(acpStore.getState().cwd).toBe("/home/danielwijaya");
+
+    // Auto-title vs manual rename guards & appDataDir tracking
+    acpStore.markPendingAutoTitle("thread-auto");
+    expect(acpStore.getState().pendingAutoTitleIds).toContain("thread-auto");
+    expect(acpStore.isApplyingAutoTitle()).toBe(false);
+    acpStore.runAsAutoTitle(() => {
+      expect(acpStore.isApplyingAutoTitle()).toBe(true);
+    });
+    expect(acpStore.isApplyingAutoTitle()).toBe(false);
+    acpStore.markThreadAutoTitled("thread-auto");
+    expect(acpStore.getState().autoTitledThreadIds).toContain("thread-auto");
+    expect(acpStore.getState().pendingAutoTitleIds).not.toContain("thread-auto");
+
+    acpStore.markPendingAutoTitle("thread-manual");
+    acpStore.markThreadManuallyRenamed("thread-manual");
+    expect(acpStore.getState().manuallyRenamedThreadIds).toContain("thread-manual");
+    expect(acpStore.getState().pendingAutoTitleIds).not.toContain("thread-manual");
+
+    acpStore.setSnapshot("thread-app", makeSnapshot("thread-app", { appDataDir: "antigravity" }));
+    expect(acpStore.getState().appDataDirs["thread-app"]).toBe("antigravity");
   });
 });

@@ -8,7 +8,7 @@ import {
   resetAcpSession,
   setAcpConfigOption,
 } from "@/lib/acp/session-manager";
-import type { AcpSessionMcpServer } from "@/lib/acp/types";
+import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     action?: string;
     threadId?: string;
     acpSessionId?: string;
+    appDataDir?: AcpAppDataDir;
     cwd?: string;
     additionalDirectories?: string[];
     mcpServers?: AcpSessionMcpServer[];
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
         const entry = await getOrCreateAcpSession({
           threadId,
           acpSessionId: body.acpSessionId,
+          appDataDir: body.appDataDir,
           cwd: body.cwd,
           additionalDirectories: body.additionalDirectories,
           mcpServers: body.mcpServers,
@@ -107,6 +109,7 @@ export async function POST(req: NextRequest) {
         const result = await loadHistoricalAcpSession({
           threadId,
           acpSessionId: body.acpSessionId,
+          appDataDir: body.appDataDir,
           cwd: body.cwd,
           additionalDirectories: body.additionalDirectories,
           mcpServers: body.mcpServers,

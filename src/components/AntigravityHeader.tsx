@@ -69,6 +69,7 @@ export function AntigravityHeaderControls() {
         action: "init",
         threadId: effectiveThreadId,
         acpSessionId: state.acpSessionIds[effectiveThreadId],
+        appDataDir: state.appDataDirs[effectiveThreadId],
         cwd: state.cwd || undefined,
         additionalDirectories: [],
         mcpServers: state.sessionMcpServers,

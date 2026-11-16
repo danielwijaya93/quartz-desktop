@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  AcpAppDataDir,
   AcpCommand,
   AcpCustomEventPayload,
   AcpSessionMcpServer,
@@ -80,6 +81,10 @@ export interface AcpClientState {
   preferredThoughtLevel: string;
   snapshots: Record<string, AcpSessionSnapshot>;
   acpSessionIds: Record<string, string>;
+  appDataDirs: Record<string, AcpAppDataDir>;
+  pendingAutoTitleIds: string[];
+  autoTitledThreadIds: string[];
+  manuallyRenamedThreadIds: string[];
   attachments: ImageAttachment[];
   activeModal: ActiveModalKind;
   lastError: string | null;
@@ -133,6 +138,24 @@ function sanitizeStringRecord(raw: unknown): Record<string, string> {
   return out;
 }
 
+function sanitizeAppDataDirRecord(raw: unknown): Record<string, AcpAppDataDir> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, AcpAppDataDir> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof k === "string" && k && (v === "antigravity" || v === "antigravity-cli")) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function sanitizeStringArray(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(raw.filter((x): x is string => typeof x === "string" && x.length > 0)),
+  );
+}
+
 function loadInitialPrefs(): Partial<AcpClientState> {
   if (typeof window === "undefined") return {};
   try {
@@ -172,9 +195,7 @@ function loadInitialPrefs(): Partial<AcpClientState> {
 
     const activeFolder = folders.find((f) => f.id === activeFolderId);
     const cwd = activeFolder?.cwd ?? (folders.length === 0 ? rawCwd : "");
-    const hiddenThreadIds = Array.isArray(parsed.hiddenThreadIds)
-      ? parsed.hiddenThreadIds.filter((x): x is string => typeof x === "string" && x.length > 0)
-      : [];
+    const hiddenThreadIds = sanitizeStringArray(parsed.hiddenThreadIds);
 
     return {
       cwd,
@@ -182,7 +203,7 @@ function loadInitialPrefs(): Partial<AcpClientState> {
       folders,
       activeFolderId,
       threadFolderMap: sanitizeStringRecord(parsed.threadFolderMap),
-      hiddenThreadIds: Array.from(new Set(hiddenThreadIds)),
+      hiddenThreadIds,
       hasInitializedDefaultFolder,
       sessionMcpServers: Array.isArray(parsed.sessionMcpServers)
         ? (parsed.sessionMcpServers as AcpSessionMcpServer[])
@@ -192,6 +213,10 @@ function loadInitialPrefs(): Partial<AcpClientState> {
       preferredThoughtLevel:
         typeof parsed.preferredThoughtLevel === "string" ? parsed.preferredThoughtLevel : "",
       acpSessionIds,
+      appDataDirs: sanitizeAppDataDirRecord(parsed.appDataDirs),
+      pendingAutoTitleIds: sanitizeStringArray(parsed.pendingAutoTitleIds),
+      autoTitledThreadIds: sanitizeStringArray(parsed.autoTitledThreadIds),
+      manuallyRenamedThreadIds: sanitizeStringArray(parsed.manuallyRenamedThreadIds),
     };
   } catch {
     return {};
@@ -215,12 +240,17 @@ const INITIAL_STATE: AcpClientState = {
   preferredThoughtLevel: "",
   snapshots: {},
   acpSessionIds: {},
+  appDataDirs: {},
+  pendingAutoTitleIds: [],
+  autoTitledThreadIds: [],
+  manuallyRenamedThreadIds: [],
   attachments: [],
   activeModal: null,
   lastError: null,
 };
 
 let state: AcpClientState = INITIAL_STATE;
+let autoTitleDepth = 0;
 
 const listeners = new Set<() => void>();
 
@@ -247,6 +277,10 @@ function persistPrefs(): void {
         preferredMode: state.preferredMode,
         preferredModel: state.preferredModel,
         preferredThoughtLevel: state.preferredThoughtLevel,
+        appDataDirs: state.appDataDirs,
+        pendingAutoTitleIds: state.pendingAutoTitleIds,
+        autoTitledThreadIds: state.autoTitledThreadIds,
+        manuallyRenamedThreadIds: state.manuallyRenamedThreadIds,
       }),
     );
     localStorage.setItem(ACP_MAP_KEY, JSON.stringify(state.acpSessionIds));
@@ -279,6 +313,9 @@ export const acpStore = {
 
   setSnapshot(threadId: string, snapshot: AcpSessionSnapshot): void {
     const nextMap = { ...state.acpSessionIds, [threadId]: snapshot.sessionId };
+    const nextAppDataDirs = snapshot.appDataDir
+      ? { ...state.appDataDirs, [threadId]: snapshot.appDataDir }
+      : state.appDataDirs;
     let folders = state.folders;
     let activeFolderId = state.activeFolderId;
     let hasInitializedDefaultFolder = state.hasInitializedDefaultFolder;
@@ -304,6 +341,7 @@ export const acpStore = {
       hasInitializedDefaultFolder,
       snapshots: { ...state.snapshots, [threadId]: snapshot },
       acpSessionIds: nextMap,
+      appDataDirs: nextAppDataDirs,
     };
     persistPrefs();
     emit();
@@ -572,6 +610,55 @@ export const acpStore = {
     };
     persistPrefs();
     emit();
+  },
+
+  markPendingAutoTitle(threadId: string): void {
+    if (!threadId || state.pendingAutoTitleIds.includes(threadId)) return;
+    state = {
+      ...state,
+      pendingAutoTitleIds: [...state.pendingAutoTitleIds, threadId],
+    };
+    persistPrefs();
+    emit();
+  },
+
+  markThreadAutoTitled(threadId: string): void {
+    if (!threadId) return;
+    state = {
+      ...state,
+      pendingAutoTitleIds: state.pendingAutoTitleIds.filter((id) => id !== threadId),
+      autoTitledThreadIds: state.autoTitledThreadIds.includes(threadId)
+        ? state.autoTitledThreadIds
+        : [...state.autoTitledThreadIds, threadId],
+    };
+    persistPrefs();
+    emit();
+  },
+
+  markThreadManuallyRenamed(threadId: string): void {
+    if (!threadId) return;
+    state = {
+      ...state,
+      pendingAutoTitleIds: state.pendingAutoTitleIds.filter((id) => id !== threadId),
+      manuallyRenamedThreadIds: state.manuallyRenamedThreadIds.includes(threadId)
+        ? state.manuallyRenamedThreadIds
+        : [...state.manuallyRenamedThreadIds, threadId],
+    };
+    persistPrefs();
+    emit();
+  },
+
+  runAsAutoTitle<T>(fn: () => T): T {
+    autoTitleDepth += 1;
+    try {
+      return fn();
+    } finally {
+      autoTitleDepth = Math.max(0, autoTitleDepth - 1);
+    }
+  },
+
+  isApplyingAutoTitle(): boolean {
+    return autoTitleDepth > 0;
   },
 
   addAttachment(att: ImageAttachment): void {

@@ -1,4 +1,5 @@
 import type {
+  AcpAppDataDir,
   AcpCommand,
   AcpConfigOption,
   AcpCustomEventPayload,
@@ -13,12 +14,15 @@ import type {
   HistoricalAcpSession,
   PendingPermissionRequest,
   ReplayedTranscriptMessage,
-  WorkspaceConfig,
 } from "@/lib/acp/types";
+import { isSyntheticTitleSession } from "@/lib/acp/thread-title";
 import { resolveAdditionalDirs, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import { getOpenUISystemPrompt } from "@/lib/openui/prompt";
 import * as acp from "@agentclientprotocol/sdk";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
 const BUILTIN_CLI_COMMANDS = new Set([
@@ -47,6 +51,7 @@ interface PendingPermissionEntry {
 export interface AcpSessionEntry {
   threadId: string;
   sessionId: string;
+  appDataDir: AcpAppDataDir;
   child: ChildProcessWithoutNullStreams;
   connection: acp.ClientConnection;
   cwd: string;
@@ -77,6 +82,7 @@ export interface AcpSessionEntry {
 export interface GetOrCreateSessionOptions {
   threadId: string;
   acpSessionId?: string;
+  appDataDir?: AcpAppDataDir;
   cwd?: string;
   additionalDirectories?: string[];
   mcpServers?: AcpSessionMcpServer[];
@@ -292,10 +298,27 @@ function applySessionResponseMetadata(
   entry.tier = extractTier(resp._meta);
 }
 
+/** Resolves whether a historical ACP session lives in CLI (`antigravity-cli`) or App/IDE (`antigravity`) storage. */
+export function detectSessionAppDataDir(
+  sessionId?: string | null,
+  preferred?: AcpAppDataDir,
+  homeDir = homedir(),
+): AcpAppDataDir {
+  if (sessionId) {
+    const cliDb = join(homeDir, ".gemini", "antigravity-cli", "conversations", `${sessionId}.db`);
+    if (existsSync(cliDb)) return "antigravity-cli";
+
+    const appDb = join(homeDir, ".gemini", "antigravity", "conversations", `${sessionId}.db`);
+    if (existsSync(appDb)) return "antigravity";
+  }
+  return preferred ?? "antigravity-cli";
+}
+
 export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot {
   return {
     threadId: entry.threadId,
     sessionId: entry.sessionId,
+    appDataDir: entry.appDataDir,
     cwd: entry.cwd,
     additionalDirectories: entry.additionalDirectories,
     title: entry.title,
@@ -314,6 +337,7 @@ export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot
 function spawnAcpConnection(params: {
   cwd: string;
   additionalDirectories: string[];
+  appDataDir?: AcpAppDataDir;
   onSessionUpdate: (update: acp.SessionUpdate) => void;
   onPermissionRequest: (req: acp.RequestPermissionRequest) => Promise<acp.RequestPermissionResponse>;
 }): {
@@ -321,6 +345,9 @@ function spawnAcpConnection(params: {
   connection: acp.ClientConnection;
 } {
   const args = ["acp", "--disable-telemetry"];
+  if (params.appDataDir && params.appDataDir !== "antigravity-cli") {
+    args.push("--app-data-dir", params.appDataDir);
+  }
   for (const dir of params.additionalDirectories) {
     args.push("--add-dir", dir);
   }
@@ -398,67 +425,103 @@ function applySessionUpdateToEntry(entry: AcpSessionEntry, update: acp.SessionUp
   entry.activeUpdateListener?.(update);
 }
 
+function createPermissionHandler(
+  getEntry: () => AcpSessionEntry | undefined,
+  autoApproveUnbound: boolean,
+): (req: acp.RequestPermissionRequest) => Promise<acp.RequestPermissionResponse> {
+  return async (req) => {
+    const entryRef = getEntry();
+    if (!entryRef) {
+      if (!autoApproveUnbound) {
+        return { outcome: { outcome: "cancelled" } };
+      }
+      const fallback = req.options.find((o) => o.kind === "allow_once") ?? req.options[0];
+      return fallback
+        ? { outcome: { outcome: "selected", optionId: fallback.optionId } }
+        : { outcome: { outcome: "cancelled" } };
+    }
+
+    const requestId = crypto.randomUUID();
+    const permission: PendingPermissionRequest = {
+      requestId,
+      threadId: entryRef.threadId,
+      sessionId: entryRef.sessionId,
+      toolCall: {
+        toolCallId: req.toolCall.toolCallId,
+        title: req.toolCall.title,
+        name:
+          typeof (req.toolCall as { name?: unknown }).name === "string"
+            ? (req.toolCall as { name?: string }).name
+            : undefined,
+        kind: req.toolCall.kind,
+        rawInput: req.toolCall.rawInput,
+      },
+      options: req.options.map((o) => ({
+        optionId: o.optionId,
+        name: o.name,
+        kind: o.kind,
+      })) as AcpPermissionOption[],
+      createdAt: Date.now(),
+    };
+
+    return new Promise<acp.RequestPermissionResponse>((resolvePromise) => {
+      const currentEntry = getEntry();
+      if (!currentEntry) {
+        resolvePromise({ outcome: { outcome: "cancelled" } });
+        return;
+      }
+      currentEntry.pendingPermissions.set(requestId, {
+        request: permission,
+        resolve: resolvePromise,
+      });
+      PERMISSION_INDEX.set(requestId, { threadId: currentEntry.threadId, entry: currentEntry });
+      currentEntry.activeCustomListener?.({ type: "permission_request", permission });
+    });
+  };
+}
+
+async function applyConfigSafely(
+  entry: AcpSessionEntry,
+  configId: string,
+  value: string,
+): Promise<void> {
+  try {
+    const res = await entry.connection.agent.request(acp.AGENT_METHODS.session_set_config_option, {
+      sessionId: entry.sessionId,
+      configId,
+      value,
+    });
+    if (res.configOptions) {
+      entry.configOptions = normalizeConfigOptions(res.configOptions);
+    }
+    if (configId === "mode" && entry.modes) {
+      entry.modes = { ...entry.modes, currentModeId: value };
+    }
+  } catch {
+    // Non-fatal: some legacy or restricted sessions may not expose every config option
+  }
+}
+
 async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<AcpSessionEntry> {
   evictOldestIfFull();
 
   const cwd = resolveWorkspaceDir(options.cwd);
   const additionalDirectories = resolveAdditionalDirs(options.additionalDirectories);
   const mcpServers = options.mcpServers ?? [];
+  const appDataDir = detectSessionAppDataDir(options.acpSessionId, options.appDataDir);
 
   let entryRef: AcpSessionEntry | undefined;
 
   const { child, connection } = spawnAcpConnection({
     cwd,
     additionalDirectories,
+    appDataDir,
     onSessionUpdate: (update) => {
       if (entryRef) {
         applySessionUpdateToEntry(entryRef, update);
       }
     },
-    onPermissionRequest: async (req) => {
-      if (!entryRef) {
-        const fallback =
-          req.options.find((o) => o.kind === "allow_once") ?? req.options[0];
-        return fallback
-          ? { outcome: { outcome: "selected", optionId: fallback.optionId } }
-          : { outcome: { outcome: "cancelled" } };
-      }
-
-      const requestId = crypto.randomUUID();
-      const permission: PendingPermissionRequest = {
-        requestId,
-        threadId: entryRef.threadId,
-        sessionId: entryRef.sessionId,
-        toolCall: {
-          toolCallId: req.toolCall.toolCallId,
-          title: req.toolCall.title,
-          name: typeof (req.toolCall as { name?: unknown }).name === "string"
-            ? (req.toolCall as { name?: string }).name
-            : undefined,
-          kind: req.toolCall.kind,
-          rawInput: req.toolCall.rawInput,
-        },
-        options: req.options.map((o) => ({
-          optionId: o.optionId,
-          name: o.name,
-          kind: o.kind,
-        })) as AcpPermissionOption[],
-        createdAt: Date.now(),
-      };
-
-      return new Promise<acp.RequestPermissionResponse>((resolvePromise) => {
-        if (!entryRef) {
-          resolvePromise({ outcome: { outcome: "cancelled" } });
-          return;
-        }
-        entryRef.pendingPermissions.set(requestId, {
-          request: permission,
-          resolve: resolvePromise,
-        });
-        PERMISSION_INDEX.set(requestId, { threadId: entryRef.threadId, entry: entryRef });
-        entryRef.activeCustomListener?.({ type: "permission_request", permission });
-      });
-    },
+    onPermissionRequest: createPermissionHandler(() => entryRef, true),
   });
 
   child.once("exit", () => {
@@ -488,6 +551,7 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     const entry: AcpSessionEntry = {
       threadId: options.threadId,
       sessionId: "",
+      appDataDir,
       child,
       connection,
       cwd,
@@ -505,18 +569,33 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
 
     let sessionResp: acp.NewSessionResponse | acp.LoadSessionResponse | acp.ResumeSessionResponse;
     if (options.acpSessionId) {
-      sessionResp = await connection.agent.request(acp.AGENT_METHODS.session_load, {
-        sessionId: options.acpSessionId,
-        cwd,
-        additionalDirectories,
-        mcpServers: acpMcpServers,
-        _meta: {
-          antigravity: {
-            systemPrompt: { append: systemPromptAppend },
+      try {
+        sessionResp = await connection.agent.request(acp.AGENT_METHODS.session_load, {
+          sessionId: options.acpSessionId,
+          cwd,
+          additionalDirectories,
+          mcpServers: acpMcpServers,
+          _meta: {
+            antigravity: {
+              systemPrompt: { append: systemPromptAppend },
+            },
           },
-        },
-      });
-      entry.sessionId = options.acpSessionId;
+        });
+        entry.sessionId = options.acpSessionId;
+      } catch {
+        const created = await connection.agent.request(acp.AGENT_METHODS.session_new, {
+          cwd,
+          additionalDirectories,
+          mcpServers: acpMcpServers,
+          _meta: {
+            antigravity: {
+              systemPrompt: { append: systemPromptAppend },
+            },
+          },
+        });
+        entry.sessionId = created.sessionId;
+        sessionResp = created;
+      }
     } else {
       const created = await connection.agent.request(acp.AGENT_METHODS.session_new, {
         cwd,
@@ -537,48 +616,13 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     // Default to `auto` mode per configuration unless explicitly overridden
     const targetMode = options.mode ?? "auto";
     if (targetMode && entry.modes?.currentModeId !== targetMode) {
-      const modeRes = await connection.agent.request(
-        acp.AGENT_METHODS.session_set_config_option,
-        {
-          sessionId: entry.sessionId,
-          configId: "mode",
-          value: targetMode,
-        },
-      );
-      if (modeRes.configOptions) {
-        entry.configOptions = normalizeConfigOptions(modeRes.configOptions);
-      }
-      if (entry.modes) {
-        entry.modes = { ...entry.modes, currentModeId: targetMode };
-      }
+      await applyConfigSafely(entry, "mode", targetMode);
     }
-
     if (options.model) {
-      const modelRes = await connection.agent.request(
-        acp.AGENT_METHODS.session_set_config_option,
-        {
-          sessionId: entry.sessionId,
-          configId: "model",
-          value: options.model,
-        },
-      );
-      if (modelRes.configOptions) {
-        entry.configOptions = normalizeConfigOptions(modelRes.configOptions);
-      }
+      await applyConfigSafely(entry, "model", options.model);
     }
-
     if (options.thoughtLevel) {
-      const thoughtRes = await connection.agent.request(
-        acp.AGENT_METHODS.session_set_config_option,
-        {
-          sessionId: entry.sessionId,
-          configId: "thought_level",
-          value: options.thoughtLevel,
-        },
-      );
-      if (thoughtRes.configOptions) {
-        entry.configOptions = normalizeConfigOptions(thoughtRes.configOptions);
-      }
+      await applyConfigSafely(entry, "thought_level", options.thoughtLevel);
     }
 
     // Give initial session/update notifications (e.g. available_commands_update) a tick to settle
@@ -592,6 +636,7 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     disposeEntry({
       threadId: options.threadId,
       sessionId: "",
+      appDataDir,
       child,
       connection,
       cwd,
@@ -706,12 +751,14 @@ export function resolveAcpPermission(
   return true;
 }
 
-/** Lists recent Antigravity sessions via a short-lived ACP control process. */
-export async function listHistoricalAcpSessions(cwd?: string): Promise<HistoricalAcpSession[]> {
-  const resolvedCwd = resolveWorkspaceDir(cwd);
+async function listSessionsFromStore(
+  resolvedCwd: string,
+  appDataDir: AcpAppDataDir,
+): Promise<HistoricalAcpSession[]> {
   const { child, connection } = spawnAcpConnection({
     cwd: resolvedCwd,
     additionalDirectories: [],
+    appDataDir,
     onSessionUpdate: () => {},
     onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }),
   });
@@ -728,6 +775,7 @@ export async function listHistoricalAcpSessions(cwd?: string): Promise<Historica
     });
     return resp.sessions.map((s) => ({
       sessionId: s.sessionId,
+      appDataDir: detectSessionAppDataDir(s.sessionId, appDataDir),
       cwd: s.cwd,
       additionalDirectories: s.additionalDirectories ?? undefined,
       title: s.title ?? undefined,
@@ -747,6 +795,165 @@ export async function listHistoricalAcpSessions(cwd?: string): Promise<Historica
   }
 }
 
+/** Lists recent Antigravity sessions across CLI (`antigravity-cli`) and App (`antigravity`) stores. */
+export async function listHistoricalAcpSessions(cwd?: string): Promise<HistoricalAcpSession[]> {
+  const resolvedCwd = resolveWorkspaceDir(cwd);
+  const [cliResult, appResult] = await Promise.allSettled([
+    listSessionsFromStore(resolvedCwd, "antigravity-cli"),
+    listSessionsFromStore(resolvedCwd, "antigravity"),
+  ]);
+
+  const byId = new Map<string, HistoricalAcpSession>();
+  const addItems = (items: HistoricalAcpSession[]) => {
+    for (const s of items) {
+      if (isSyntheticTitleSession(s.title)) continue;
+      const existing = byId.get(s.sessionId);
+      if (!existing) {
+        byId.set(s.sessionId, s);
+      } else {
+        byId.set(s.sessionId, {
+          ...existing,
+          ...s,
+          appDataDir: detectSessionAppDataDir(s.sessionId, s.appDataDir ?? existing.appDataDir),
+          title: s.title || existing.title,
+        });
+      }
+    }
+  };
+
+  if (appResult.status === "fulfilled") addItems(appResult.value);
+  if (cliResult.status === "fulfilled") addItems(cliResult.value);
+
+  if (byId.size === 0 && cliResult.status === "rejected" && appResult.status === "rejected") {
+    throw cliResult.reason;
+  }
+
+  return Array.from(byId.values()).sort((a, b) => {
+    const tA = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const tB = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    return (Number.isFinite(tB) ? tB : 0) - (Number.isFinite(tA) ? tA : 0);
+  });
+}
+
+function hasConversationUpdates(updates: acp.SessionUpdate[]): boolean {
+  return updates.some(
+    (u) =>
+      u.sessionUpdate === "user_message_chunk" ||
+      u.sessionUpdate === "agent_message_chunk" ||
+      u.sessionUpdate === "tool_call" ||
+      u.sessionUpdate === "tool_call_update",
+  );
+}
+
+async function attemptLoadHistoricalSession(params: {
+  threadId: string;
+  acpSessionId: string;
+  appDataDir: AcpAppDataDir;
+  cwd: string;
+  additionalDirectories: string[];
+  mcpServers: AcpSessionMcpServer[];
+}): Promise<{ entry: AcpSessionEntry; replayed: acp.SessionUpdate[] }> {
+  const replayed: acp.SessionUpdate[] = [];
+  let entryRef: AcpSessionEntry | undefined;
+
+  const { child, connection } = spawnAcpConnection({
+    cwd: params.cwd,
+    additionalDirectories: params.additionalDirectories,
+    appDataDir: params.appDataDir,
+    onSessionUpdate: (update) => {
+      replayed.push(update);
+      if (entryRef) {
+        applySessionUpdateToEntry(entryRef, update);
+      }
+    },
+    onPermissionRequest: createPermissionHandler(() => entryRef, false),
+  });
+
+  try {
+    await connection.agent.request(acp.AGENT_METHODS.initialize, {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      clientInfo: { name: "antigravity-gen-ui", version: "0.1.0" },
+    });
+
+    const entry: AcpSessionEntry = {
+      threadId: params.threadId,
+      sessionId: params.acpSessionId,
+      appDataDir: params.appDataDir,
+      child,
+      connection,
+      cwd: params.cwd,
+      additionalDirectories: params.additionalDirectories,
+      mcpServers: params.mcpServers,
+      commands: [],
+      configOptions: [],
+      plan: [],
+      pendingPermissions: new Map(),
+      isStreaming: false,
+      lastUsed: Date.now(),
+    };
+    entryRef = entry;
+
+    let loaded: acp.LoadSessionResponse;
+    try {
+      loaded = await connection.agent.request(acp.AGENT_METHODS.session_load, {
+        sessionId: params.acpSessionId,
+        cwd: params.cwd,
+        additionalDirectories: params.additionalDirectories,
+        mcpServers: mapMcpServersToAcp(params.mcpServers),
+        _meta: {
+          antigravity: {
+            systemPrompt: { append: getOpenUISystemPrompt() },
+          },
+        },
+      });
+    } catch (loadErr) {
+      if (params.mcpServers.length > 0) {
+        // Retry without custom MCP servers if one failed startup during session_load
+        loaded = await connection.agent.request(acp.AGENT_METHODS.session_load, {
+          sessionId: params.acpSessionId,
+          cwd: params.cwd,
+          additionalDirectories: params.additionalDirectories,
+          mcpServers: [],
+          _meta: {
+            antigravity: {
+              systemPrompt: { append: getOpenUISystemPrompt() },
+            },
+          },
+        });
+      } else {
+        throw loadErr;
+      }
+    }
+
+    // Allow trailing session/update replay frames to settle cleanly
+    await new Promise((r) => setTimeout(r, 100));
+
+    applySessionResponseMetadata(entry, loaded as SessionResponseWithModels);
+    await applyConfigSafely(entry, "mode", "auto");
+
+    return { entry, replayed };
+  } catch (err) {
+    disposeEntry({
+      threadId: params.threadId,
+      sessionId: params.acpSessionId,
+      appDataDir: params.appDataDir,
+      child,
+      connection,
+      cwd: params.cwd,
+      additionalDirectories: params.additionalDirectories,
+      mcpServers: params.mcpServers,
+      commands: [],
+      configOptions: [],
+      plan: [],
+      pendingPermissions: new Map(),
+      isStreaming: false,
+      lastUsed: Date.now(),
+    });
+    throw err;
+  }
+}
+
 /**
  * Loads an existing ACP session into `threadId` and converts replayed history
  * into OpenUI-compatible AG-UI transcript messages.
@@ -754,6 +961,7 @@ export async function listHistoricalAcpSessions(cwd?: string): Promise<Historica
 export async function loadHistoricalAcpSession(params: {
   threadId: string;
   acpSessionId: string;
+  appDataDir?: AcpAppDataDir;
   cwd?: string;
   additionalDirectories?: string[];
   mcpServers?: AcpSessionMcpServer[];
@@ -767,131 +975,78 @@ export async function loadHistoricalAcpSession(params: {
   const cwd = resolveWorkspaceDir(params.cwd);
   const additionalDirectories = resolveAdditionalDirs(params.additionalDirectories);
   const mcpServers = params.mcpServers ?? [];
-  const replayed: acp.SessionUpdate[] = [];
-  let entryRef: AcpSessionEntry | undefined;
+  const primaryStore = detectSessionAppDataDir(params.acpSessionId, params.appDataDir);
 
-  const { child, connection } = spawnAcpConnection({
+  let chosen = await attemptLoadHistoricalSession({
+    threadId: params.threadId,
+    acpSessionId: params.acpSessionId,
+    appDataDir: primaryStore,
     cwd,
     additionalDirectories,
-    onSessionUpdate: (update) => {
-      replayed.push(update);
-      if (entryRef) {
-        applySessionUpdateToEntry(entryRef, update);
-      }
-    },
-    onPermissionRequest: async (req) => {
-      if (!entryRef) return { outcome: { outcome: "cancelled" } };
-      const requestId = crypto.randomUUID();
-      const permission: PendingPermissionRequest = {
-        requestId,
-        threadId: entryRef.threadId,
-        sessionId: entryRef.sessionId,
-        toolCall: {
-          toolCallId: req.toolCall.toolCallId,
-          title: req.toolCall.title,
-          name: typeof (req.toolCall as { name?: unknown }).name === "string"
-            ? (req.toolCall as { name?: string }).name
-            : undefined,
-          kind: req.toolCall.kind,
-          rawInput: req.toolCall.rawInput,
-        },
-        options: req.options.map((o) => ({
-          optionId: o.optionId,
-          name: o.name,
-          kind: o.kind,
-        })) as AcpPermissionOption[],
-        createdAt: Date.now(),
-      };
-      return new Promise((resolvePromise) => {
-        if (!entryRef) {
-          resolvePromise({ outcome: { outcome: "cancelled" } });
-          return;
-        }
-        entryRef.pendingPermissions.set(requestId, { request: permission, resolve: resolvePromise });
-        PERMISSION_INDEX.set(requestId, { threadId: entryRef.threadId, entry: entryRef });
-        entryRef.activeCustomListener?.({ type: "permission_request", permission });
-      });
-    },
+    mcpServers,
   });
 
-  try {
-    await connection.agent.request(acp.AGENT_METHODS.initialize, {
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-      clientInfo: { name: "antigravity-gen-ui", version: "0.1.0" },
-    });
-
-    const entry: AcpSessionEntry = {
-      threadId: params.threadId,
-      sessionId: params.acpSessionId,
-      child,
-      connection,
-      cwd,
-      additionalDirectories,
-      mcpServers,
-      commands: [],
-      configOptions: [],
-      plan: [],
-      pendingPermissions: new Map(),
-      isStreaming: false,
-      lastUsed: Date.now(),
-    };
-    entryRef = entry;
-
-    const loaded = await connection.agent.request(acp.AGENT_METHODS.session_load, {
-      sessionId: params.acpSessionId,
-      cwd,
-      additionalDirectories,
-      mcpServers: mapMcpServersToAcp(mcpServers),
-      _meta: {
-        antigravity: {
-          systemPrompt: { append: getOpenUISystemPrompt() },
-        },
-      },
-    });
-
-    applySessionResponseMetadata(entry, loaded as SessionResponseWithModels);
-
-    // Ensure auto mode by default if loaded session was default
-    const modeRes = await connection.agent.request(
-      acp.AGENT_METHODS.session_set_config_option,
-      {
-        sessionId: entry.sessionId,
-        configId: "mode",
-        value: "auto",
-      },
-    );
-    if (modeRes.configOptions) {
-      entry.configOptions = normalizeConfigOptions(modeRes.configOptions);
+  // Fallback across the alternate store if primary replayed 0 conversation messages
+  if (!hasConversationUpdates(chosen.replayed)) {
+    const alternateStore: AcpAppDataDir =
+      primaryStore === "antigravity-cli" ? "antigravity" : "antigravity-cli";
+    try {
+      const alt = await attemptLoadHistoricalSession({
+        threadId: params.threadId,
+        acpSessionId: params.acpSessionId,
+        appDataDir: alternateStore,
+        cwd,
+        additionalDirectories,
+        mcpServers,
+      });
+      if (hasConversationUpdates(alt.replayed)) {
+        disposeEntry(chosen.entry);
+        chosen = alt;
+      } else {
+        disposeEntry(alt.entry);
+      }
+    } catch {
+      // Keep original attempt if alternate store fails
     }
-    if (entry.modes) {
-      entry.modes = { ...entry.modes, currentModeId: "auto" };
+  }
+
+  chosen.entry.child.once("exit", () => {
+    const active = SESSIONS.get(params.threadId);
+    if (active && active.child === chosen.entry.child) {
+      for (const reqId of active.pendingPermissions.keys()) {
+        PERMISSION_INDEX.delete(reqId);
+      }
+      SESSIONS.delete(params.threadId);
     }
+  });
 
-    SESSIONS.set(params.threadId, entry);
+  SESSIONS.set(params.threadId, chosen.entry);
 
-    const messages = convertReplayedUpdatesToMessages(replayed);
-    return {
-      snapshot: buildSessionSnapshot(entry),
-      messages,
-    };
-  } catch (err) {
-    disposeEntry({
-      threadId: params.threadId,
-      sessionId: params.acpSessionId,
-      child,
-      connection,
-      cwd,
-      additionalDirectories,
-      mcpServers,
-      commands: [],
-      configOptions: [],
-      plan: [],
-      pendingPermissions: new Map(),
-      isStreaming: false,
-      lastUsed: Date.now(),
-    });
-    throw err;
+  const messages = convertReplayedUpdatesToMessages(chosen.replayed);
+  return {
+    snapshot: buildSessionSnapshot(chosen.entry),
+    messages,
+  };
+}
+
+function extractContentBlockText(block: acp.ContentBlock | undefined | null): string {
+  if (!block) return "";
+  switch (block.type) {
+    case "text":
+      return block.text;
+    case "resource_link":
+      return `[${block.name || block.uri}](${block.uri})`;
+    case "resource":
+      if ("text" in block.resource && typeof block.resource.text === "string") {
+        return block.resource.text;
+      }
+      return `[Resource: ${block.resource.uri}]`;
+    case "image":
+      return "[Image attachment]";
+    case "audio":
+      return "[Audio attachment]";
+    default:
+      return "";
   }
 }
 
@@ -901,6 +1056,12 @@ export function convertReplayedUpdatesToMessages(
   const messages: ReplayedTranscriptMessage[] = [];
   let currentUser: ReplayedTranscriptMessage | null = null;
   let currentAssistant: ReplayedTranscriptMessage | null = null;
+  let turnHasTrailingAssistantProse = false;
+  let lastTurnProse = "";
+  let pendingToolEntries = new Map<
+    string,
+    { tc: NonNullable<ReplayedTranscriptMessage["toolCalls"]>[number]; completed: boolean }
+  >();
 
   const flushUser = () => {
     if (currentUser && currentUser.content) {
@@ -908,6 +1069,7 @@ export function convertReplayedUpdatesToMessages(
     }
     currentUser = null;
   };
+
   const flushAssistant = () => {
     if (currentAssistant && (currentAssistant.content || currentAssistant.toolCalls?.length)) {
       messages.push(currentAssistant);
@@ -915,52 +1077,135 @@ export function convertReplayedUpdatesToMessages(
     currentAssistant = null;
   };
 
+  const emitToolResult = (
+    toolCallId: string,
+    status: string | undefined | null,
+    outputText: string,
+  ) => {
+    const capped =
+      outputText.length > 24_000
+        ? `${outputText.slice(0, 24_000)}\n... [truncated ${outputText.length - 24_000} chars]`
+        : outputText;
+    messages.push({
+      id: crypto.randomUUID(),
+      role: "tool",
+      toolCallId,
+      content: capped,
+      ...(status === "failed" ? { error: capped || "Tool failed" } : {}),
+    });
+  };
+
+  const finalizeAssistantTurn = () => {
+    flushAssistant();
+    for (const [toolCallId, entry] of pendingToolEntries) {
+      if (!entry.completed) {
+        entry.completed = true;
+        emitToolResult(toolCallId, "completed", "Completed or interrupted before output was recorded.");
+      }
+    }
+    // OpenUI's InterleavedTurn renders only the final assistant segment's text as the turn answer.
+    // If prose appeared only before tool calls with no trailing prose after the last tool, surface it at the end.
+    if (lastTurnProse.trim() && !turnHasTrailingAssistantProse && messages.at(-1)?.role === "tool") {
+      messages.push({
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: lastTurnProse,
+        toolCalls: [],
+      });
+    }
+    pendingToolEntries = new Map();
+    lastTurnProse = "";
+    turnHasTrailingAssistantProse = false;
+  };
+
   for (const update of updates) {
     if (update.sessionUpdate === "user_message_chunk") {
-      flushAssistant();
-      const text = update.content.type === "text" ? update.content.text : "";
+      finalizeAssistantTurn();
+      const text = extractContentBlockText(update.content);
       if (!currentUser) {
         currentUser = { id: crypto.randomUUID(), role: "user", content: "" };
       }
       currentUser.content += text;
     } else if (update.sessionUpdate === "agent_message_chunk") {
       flushUser();
-      const text = update.content.type === "text" ? update.content.text : "";
+      const text = extractContentBlockText(update.content);
       if (!currentAssistant) {
         currentAssistant = { id: crypto.randomUUID(), role: "assistant", content: "", toolCalls: [] };
       }
       currentAssistant.content += text;
+      if (currentAssistant.content.trim()) {
+        lastTurnProse = currentAssistant.content;
+        turnHasTrailingAssistantProse = true;
+      }
     } else if (update.sessionUpdate === "tool_call") {
       flushUser();
       if (!currentAssistant) {
         currentAssistant = { id: crypto.randomUUID(), role: "assistant", content: "", toolCalls: [] };
       }
+      turnHasTrailingAssistantProse = false;
       const tcName =
         typeof (update as { name?: unknown }).name === "string"
           ? (update as { name: string }).name
           : update.title;
-      currentAssistant.toolCalls?.push({
+      const tc = {
         id: update.toolCallId,
-        type: "function",
+        type: "function" as const,
         function: {
           name: tcName || "tool",
           arguments: JSON.stringify(update.rawInput ?? {}),
         },
-      });
+      };
+      currentAssistant.toolCalls?.push(tc);
+      const entry = { tc, completed: false };
+      pendingToolEntries.set(update.toolCallId, entry);
+
       if (update.status === "completed" || update.status === "failed") {
+        entry.completed = true;
         flushAssistant();
-        messages.push({
-          id: crypto.randomUUID(),
-          role: "tool",
-          toolCallId: update.toolCallId,
-          content: JSON.stringify(update.rawOutput ?? {}),
-          ...(update.status === "failed" ? { error: "Tool failed" } : {}),
-        });
+        emitToolResult(update.toolCallId, update.status, extractAcpToolOutput(update));
+      }
+    } else if (update.sessionUpdate === "tool_call_update") {
+      flushUser();
+      turnHasTrailingAssistantProse = false;
+      let entry = pendingToolEntries.get(update.toolCallId);
+      if (!entry) {
+        if (!currentAssistant) {
+          currentAssistant = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "",
+            toolCalls: [],
+          };
+        }
+        const tc = {
+          id: update.toolCallId,
+          type: "function" as const,
+          function: {
+            name: update.title || "tool",
+            arguments: JSON.stringify(update.rawInput ?? {}),
+          },
+        };
+        currentAssistant.toolCalls?.push(tc);
+        entry = { tc, completed: false };
+        pendingToolEntries.set(update.toolCallId, entry);
+      } else {
+        if (update.title && entry.tc.function.name === "tool") {
+          entry.tc.function.name = update.title;
+        }
+        if (update.rawInput !== undefined && entry.tc.function.arguments === "{}") {
+          entry.tc.function.arguments = JSON.stringify(update.rawInput ?? {});
+        }
+      }
+
+      if ((update.status === "completed" || update.status === "failed") && !entry.completed) {
+        entry.completed = true;
+        flushAssistant();
+        emitToolResult(update.toolCallId, update.status, extractAcpToolOutput(update));
       }
     }
   }
   flushUser();
-  flushAssistant();
+  finalizeAssistantTurn();
   return messages;
 }
 

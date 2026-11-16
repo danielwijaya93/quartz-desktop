@@ -4,7 +4,7 @@ import {
   extractAcpToolOutput,
   getOrCreateAcpSession,
 } from "@/lib/acp/session-manager";
-import type { AcpSessionMcpServer } from "@/lib/acp/types";
+import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
 import { executeWorkspaceShell, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import {
   buildShellResultOpenUILang,
@@ -35,6 +35,7 @@ interface ChatRequestBody {
   runId?: string;
   messages?: IncomingMessage[];
   acpSessionId?: string;
+  appDataDir?: AcpAppDataDir;
   cwd?: string;
   additionalDirectories?: string[];
   mcpServers?: AcpSessionMcpServer[];
@@ -157,6 +158,7 @@ export async function POST(req: NextRequest) {
     sessionEntry = await getOrCreateAcpSession({
       threadId,
       acpSessionId: body.acpSessionId,
+      appDataDir: body.appDataDir,
       cwd,
       additionalDirectories: body.additionalDirectories,
       mcpServers: body.mcpServers,

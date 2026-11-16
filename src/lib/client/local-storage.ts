@@ -17,6 +17,13 @@ import {
 const THREADS_KEY = "agy-openui:threads";
 const messagesKey = (threadId: string) => `agy-openui:messages:${threadId}`;
 
+const IDB_NAME = "agy-openui-db";
+const IDB_STORE = "messages";
+const IDB_VERSION = 1;
+
+let dbPromise: Promise<IDBDatabase | null> | null = null;
+const writeQueues = new Map<string, Promise<void>>();
+
 function readJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   try {
@@ -32,20 +39,114 @@ function writeJson(key: string, value: unknown): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // ignore storage errors
+    // ignore storage quota errors
   }
+}
+
+function openMessagesDb(): Promise<IDBDatabase | null> {
+  if (typeof window === "undefined" || typeof indexedDB === "undefined") {
+    return Promise.resolve(null);
+  }
+  if (dbPromise) return dbPromise;
+
+  dbPromise = new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return dbPromise;
+}
+
+async function idbGetMessages(db: IDBDatabase, threadId: string): Promise<Message[] | undefined> {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(threadId);
+      req.onsuccess = () => {
+        resolve(Array.isArray(req.result) ? (req.result as Message[]) : undefined);
+      };
+      req.onerror = () => resolve(undefined);
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+
+async function idbPutMessages(db: IDBDatabase, threadId: string, messages: Message[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(messages, threadId);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function readMessagesFromStore(threadId: string): Promise<Message[]> {
+  const db = await openMessagesDb();
+  if (db) {
+    const idbMessages = await idbGetMessages(db, threadId);
+    if (idbMessages !== undefined) {
+      return idbMessages;
+    }
+  }
+
+  // Migrate any legacy localStorage transcript into IndexedDB once
+  const legacy = readJson<Message[]>(messagesKey(threadId), []);
+  if (db && legacy.length > 0) {
+    const ok = await idbPutMessages(db, threadId, legacy);
+    if (ok) {
+      try {
+        localStorage.removeItem(messagesKey(threadId));
+      } catch {
+        // ignore cleanup failure
+      }
+    }
+  }
+  return legacy;
+}
+
+function enqueueMessageWrite(threadId: string, messages: Message[]): Promise<void> {
+  const prev = writeQueues.get(threadId) ?? Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(async () => {
+      const db = await openMessagesDb();
+      if (db) {
+        const ok = await idbPutMessages(db, threadId, messages);
+        if (ok) return;
+      }
+      writeJson(messagesKey(threadId), messages);
+    });
+  writeQueues.set(threadId, next);
+  return next;
 }
 
 export function listStoredThreads(): Thread[] {
   return readJson<Thread[]>(THREADS_KEY, []);
 }
 
-export function importReplayedSessionToStorage(params: {
+export async function importReplayedSessionToStorage(params: {
   threadId: string;
   title: string;
   snapshot: AcpSessionSnapshot;
   messages: ReplayedTranscriptMessage[];
-}): Thread {
+}): Promise<Thread> {
   const threads = readJson<Thread[]>(THREADS_KEY, []);
   const thread: Thread = {
     id: params.threadId,
@@ -54,7 +155,7 @@ export function importReplayedSessionToStorage(params: {
   };
   const nextThreads = [thread, ...threads.filter((t) => t.id !== params.threadId)];
   writeJson(THREADS_KEY, nextThreads);
-  writeJson(messagesKey(params.threadId), params.messages);
+  await enqueueMessageWrite(params.threadId, params.messages as unknown as Message[]);
   if (params.snapshot.cwd) {
     const folder = acpStore.addFolder({ cwd: params.snapshot.cwd });
     acpStore.assignThreadToFolder(params.threadId, folder.id);
@@ -86,6 +187,7 @@ export function createAntigravityChatBindings(): {
           mergedBody = JSON.stringify({
             ...parsed,
             acpSessionId: state.acpSessionIds[threadId],
+            appDataDir: state.appDataDirs[threadId],
             cwd: state.cwd || undefined,
             additionalDirectories: state.additionalDirectories,
             mcpServers: state.sessionMcpServers,
@@ -109,7 +211,7 @@ export function createAntigravityChatBindings(): {
 
   const send: ChatLLM["send"] = async (params) => {
     activeThreadId = params.threadId;
-    writeJson(messagesKey(params.threadId), params.messages);
+    void enqueueMessageWrite(params.threadId, params.messages);
 
     const response = await baseLlm.send(params);
     if (!response.ok || !response.body) return response;
@@ -127,7 +229,7 @@ export function createAntigravityChatBindings(): {
       .catch(() => {})
       .finally(() => {
         if (reply.size > 0) {
-          writeJson(messagesKey(params.threadId), [...params.messages, ...reply.values()]);
+          void enqueueMessageWrite(params.threadId, [...params.messages, ...reply.values()]);
         }
       });
 
@@ -151,10 +253,11 @@ export function createAntigravityChatBindings(): {
           const prev = readJson<Thread[]>(THREADS_KEY, []);
           writeJson(THREADS_KEY, [thread, ...prev]);
           acpStore.assignThreadToFolder(thread.id);
+          acpStore.markPendingAutoTitle(thread.id);
           return thread;
         },
         async getMessages(threadId: string) {
-          return readJson<Message[]>(messagesKey(threadId), []);
+          return readMessagesFromStore(threadId);
         },
         async updateThread(thread: Thread) {
           const prev = readJson<Thread[]>(THREADS_KEY, []);
@@ -162,6 +265,9 @@ export function createAntigravityChatBindings(): {
             THREADS_KEY,
             prev.map((t) => (t.id === thread.id ? thread : t)),
           );
+          if (!acpStore.isApplyingAutoTitle()) {
+            acpStore.markThreadManuallyRenamed(thread.id);
+          }
           return thread;
         },
         async deleteThread(id: string) {
