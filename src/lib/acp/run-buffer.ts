@@ -49,15 +49,23 @@ export function finishBufferedRun(run: BufferedRun, doneFrame = "data: [DONE]\n\
 export function createRunSseStream(
   run: BufferedRun,
   signal?: AbortSignal,
+  options?: { heartbeatMs?: number },
 ): ReadableStream<Uint8Array> {
+  const heartbeatMs = options?.heartbeatMs ?? 10_000;
   let unsubscribe: (() => void) | null = null;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
       const closeStream = () => {
         if (closed) return;
         closed = true;
+        if (heartbeatTimer !== null) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         unsubscribe?.();
         unsubscribe = null;
         try {
@@ -80,6 +88,17 @@ export function createRunSseStream(
         return;
       }
 
+      if (heartbeatMs > 0) {
+        heartbeatTimer = setInterval(() => {
+          if (closed || run.done) return;
+          try {
+            controller.enqueue(encoder.encode(": keepalive\n\n"));
+          } catch {
+            closeStream();
+          }
+        }, heartbeatMs);
+      }
+
       const listener = (chunk: string | null) => {
         if (closed) return;
         if (chunk === null) {
@@ -98,6 +117,10 @@ export function createRunSseStream(
       signal?.addEventListener("abort", onAbort, { once: true });
 
       unsubscribe = () => {
+        if (heartbeatTimer !== null) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         run.subscribers.delete(listener);
         signal?.removeEventListener("abort", onAbort);
       };

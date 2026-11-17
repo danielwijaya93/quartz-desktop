@@ -4,6 +4,12 @@ import type { AcpSessionSnapshot, ReplayedTranscriptMessage } from "@/lib/acp/ty
 import { acpStore } from "@/lib/client/acp-store";
 import { createAcpStreamAdapter } from "@/lib/client/acp-stream-adapter";
 import {
+  fetchRemoteMessages,
+  fetchRemoteSyncState,
+  pushSyncSaveMessages,
+  pushSyncUpsertThread,
+} from "@/lib/client/sync-client";
+import {
   agUIAdapter,
   fetchLLM,
   processStreamedMessage,
@@ -121,7 +127,11 @@ async function readMessagesFromStore(threadId: string): Promise<Message[]> {
   return legacy;
 }
 
-export function enqueueMessageWrite(threadId: string, messages: Message[]): Promise<void> {
+export function enqueueMessageWrite(
+  threadId: string,
+  messages: Message[],
+  options?: { skipRemoteSync?: boolean },
+): Promise<void> {
   const prev = writeQueues.get(threadId) ?? Promise.resolve();
   const next = prev
     .catch(() => {})
@@ -129,9 +139,15 @@ export function enqueueMessageWrite(threadId: string, messages: Message[]): Prom
       const db = await openMessagesDb();
       if (db) {
         const ok = await idbPutMessages(db, threadId, messages);
-        if (ok) return;
+        if (!ok) {
+          writeJson(messagesKey(threadId), messages);
+        }
+      } else {
+        writeJson(messagesKey(threadId), messages);
       }
-      writeJson(messagesKey(threadId), messages);
+      if (!options?.skipRemoteSync && messages.length > 0) {
+        await pushSyncSaveMessages(threadId, messages);
+      }
     });
   writeQueues.set(threadId, next);
   return next;
@@ -139,6 +155,14 @@ export function enqueueMessageWrite(threadId: string, messages: Message[]): Prom
 
 export function listStoredThreads(): Thread[] {
   return readJson<Thread[]>(THREADS_KEY, []);
+}
+
+export function writeStoredThreads(threads: Thread[]): void {
+  writeJson(THREADS_KEY, threads);
+}
+
+export async function readLocalMessages(threadId: string): Promise<Message[]> {
+  return readMessagesFromStore(threadId);
 }
 
 export async function importReplayedSessionToStorage(params: {
@@ -161,6 +185,11 @@ export async function importReplayedSessionToStorage(params: {
     acpStore.assignThreadToFolder(params.threadId, folder.id);
   }
   acpStore.setSnapshot(params.threadId, params.snapshot);
+  void pushSyncUpsertThread({
+    ...thread,
+    acpSessionId: params.snapshot.sessionId,
+    appDataDir: params.snapshot.appDataDir,
+  });
   return thread;
 }
 
@@ -196,12 +225,44 @@ function waitUntilVisibleOrDelay(signal?: AbortSignal): Promise<void> {
   });
 }
 
-function createResilientSseStream(
+function readWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (timeoutMs <= 0) {
+    return reader.read();
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      void reader.cancel().catch(() => {});
+      reject(new Error("SSE read inactivity timeout"));
+    }, timeoutMs);
+    reader.read().then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+function isSseCommentFrame(frame: string): boolean {
+  return frame.trimStart().startsWith(":");
+}
+
+export function createResilientSseStream(
   initialBody: ReadableStream<Uint8Array>,
   threadId: string,
   signal?: AbortSignal,
+  options?: { inactivityTimeoutMs?: number; maxReattachAttempts?: number },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  const inactivityTimeoutMs = options?.inactivityTimeoutMs ?? 25_000;
+  const maxReattachAttempts = options?.maxReattachAttempts ?? 20;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -215,10 +276,11 @@ function createResilientSseStream(
         const decoder = new TextDecoder();
         let buffer = "";
         let framesInThisStream = 0;
+        let streamError: unknown = null;
 
         try {
           while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await readWithTimeout(reader, inactivityTimeoutMs);
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
 
@@ -226,13 +288,15 @@ function createResilientSseStream(
             while (sepIdx !== -1) {
               const frame = buffer.slice(0, sepIdx + 2);
               buffer = buffer.slice(sepIdx + 2);
-              framesInThisStream += 1;
 
-              if (framesInThisStream > forwardedFrames) {
-                forwardedFrames = framesInThisStream;
-                controller.enqueue(encoder.encode(frame));
-                if (frame.startsWith("data: [DONE]")) {
-                  sawDone = true;
+              if (!isSseCommentFrame(frame)) {
+                framesInThisStream += 1;
+                if (framesInThisStream > forwardedFrames) {
+                  forwardedFrames = framesInThisStream;
+                  controller.enqueue(encoder.encode(frame));
+                  if (frame.startsWith("data: [DONE]")) {
+                    sawDone = true;
+                  }
                 }
               }
               sepIdx = buffer.indexOf("\n\n");
@@ -240,7 +304,7 @@ function createResilientSseStream(
           }
 
           const tail = buffer + decoder.decode();
-          if (tail.trim()) {
+          if (tail.trim() && !isSseCommentFrame(tail)) {
             framesInThisStream += 1;
             if (framesInThisStream > forwardedFrames) {
               forwardedFrames = framesInThisStream;
@@ -250,30 +314,48 @@ function createResilientSseStream(
               }
             }
           }
-
-          break;
         } catch (err) {
-          if (signal?.aborted || sawDone || reattachAttempts >= 5) {
-            controller.error(err);
-            return;
-          }
-          reattachAttempts += 1;
-          await waitUntilVisibleOrDelay(signal);
-          if (signal?.aborted) {
-            controller.error(err);
-            return;
-          }
-          const resumeRes = await fetch(
-            `/api/chat?threadId=${encodeURIComponent(threadId)}`,
-            { signal },
-          ).catch(() => null);
-
-          if (!resumeRes?.ok || !resumeRes.body) {
-            controller.error(err);
-            return;
-          }
-          currentBody = resumeRes.body;
+          streamError = err;
         }
+
+        if (sawDone || signal?.aborted) {
+          break;
+        }
+
+        if (reattachAttempts >= maxReattachAttempts) {
+          if (streamError) {
+            controller.error(streamError);
+          } else {
+            controller.close();
+          }
+          return;
+        }
+
+        reattachAttempts += 1;
+        await waitUntilVisibleOrDelay(signal);
+        if (signal?.aborted) {
+          if (streamError) {
+            controller.error(streamError);
+          } else {
+            controller.close();
+          }
+          return;
+        }
+
+        const resumeRes = await fetch(
+          `/api/chat?threadId=${encodeURIComponent(threadId)}`,
+          { signal },
+        ).catch(() => null);
+
+        if (!resumeRes?.ok || !resumeRes.body) {
+          if (streamError) {
+            controller.error(streamError);
+          } else {
+            controller.close();
+          }
+          return;
+        }
+        currentBody = resumeRes.body;
       }
 
       try {
@@ -378,6 +460,12 @@ export function createAntigravityChatBindings(): {
     storage: {
       thread: {
         async listThreads() {
+          const remote = await fetchRemoteSyncState();
+          if (remote) {
+            writeJson(THREADS_KEY, remote.threads);
+            acpStore.applySyncedWorkspaceState(remote);
+            return { threads: remote.threads };
+          }
           return { threads: readJson<Thread[]>(THREADS_KEY, []) };
         },
         async createThread(firstMessage: UserMessage) {
@@ -391,9 +479,15 @@ export function createAntigravityChatBindings(): {
           writeJson(THREADS_KEY, [thread, ...prev]);
           acpStore.assignThreadToFolder(thread.id);
           acpStore.markPendingAutoTitle(thread.id);
+          void pushSyncUpsertThread(thread);
           return thread;
         },
         async getMessages(threadId: string) {
+          const remoteMsgs = await fetchRemoteMessages(threadId);
+          if (remoteMsgs && remoteMsgs.length > 0) {
+            await enqueueMessageWrite(threadId, remoteMsgs, { skipRemoteSync: true });
+            return remoteMsgs;
+          }
           return readMessagesFromStore(threadId);
         },
         async updateThread(thread: Thread) {
@@ -405,6 +499,7 @@ export function createAntigravityChatBindings(): {
           if (!acpStore.isApplyingAutoTitle()) {
             acpStore.markThreadManuallyRenamed(thread.id);
           }
+          void pushSyncUpsertThread({ ...thread, updatedAt: Date.now() });
           return thread;
         },
         async deleteThread(id: string) {

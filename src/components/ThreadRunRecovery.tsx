@@ -13,8 +13,9 @@ import {
 import { useEffect, useRef } from "react";
 
 /**
- * Recovers an in-progress or recently completed ACP turn after a mobile page refresh or
- * background tab suspension when the last persisted message is an unanswered user message.
+ * Recovers an in-progress or recently completed ACP turn after a mobile page refresh,
+ * background tab suspension, or stalled stream—even if partial assistant messages were
+ * already persisted before the disconnect.
  */
 export function ThreadRunRecovery() {
   const selectedThreadId = useThreadList((s) => s.selectedThreadId);
@@ -32,9 +33,12 @@ export function ThreadRunRecovery() {
     if (messages.length === 0) return;
 
     const lastMsg = messages[messages.length - 1];
-    if (!lastMsg || lastMsg.role !== "user") return;
+    if (!lastMsg) return;
 
-    const attemptKey = `${selectedThreadId}:${lastMsg.id}`;
+    const lastUserIdx = messages.findLastIndex((m) => m.role === "user");
+    if (lastUserIdx === -1) return;
+
+    const attemptKey = `${selectedThreadId}:${lastMsg.id}:${messages.length}`;
     if (attemptedKeysRef.current.has(attemptKey)) return;
     attemptedKeysRef.current.add(attemptKey);
 
@@ -42,33 +46,62 @@ export function ThreadRunRecovery() {
 
     void (async () => {
       try {
-        const res = await fetch(
-          `/api/chat?threadId=${encodeURIComponent(selectedThreadId)}`,
-          { signal: controller.signal },
+        const metaRes = await fetch(
+          `/api/chat?threadId=${encodeURIComponent(selectedThreadId)}&meta=1`,
+          { signal: controller.signal, cache: "no-store" },
         );
 
-        if (res.ok && res.body) {
-          const baseMessages = messagesRef.current;
-          const reply = new Map<string, Message>();
-          const syncMessages = (message: Message) => {
-            reply.set(message.id, message);
-            setMessages([...baseMessages, ...reply.values()]);
+        let shouldAttachRun = lastMsg.role === "user";
+        if (metaRes.ok) {
+          const meta = (await metaRes.json()) as {
+            runId?: string;
+            done?: boolean;
+            finishedAt?: number | null;
           };
-
-          await processStreamedMessage({
-            response: res,
-            createMessage: syncMessages,
-            updateMessage: syncMessages,
-            adapter: createAcpStreamAdapter(() => selectedThreadId),
-          });
-
-          if (reply.size > 0) {
-            const finalMessages = [...baseMessages, ...reply.values()];
-            setMessages(finalMessages);
-            await enqueueMessageWrite(selectedThreadId, finalMessages);
+          if (!meta.done || lastMsg.role === "user") {
+            shouldAttachRun = true;
+          } else if (meta.finishedAt) {
+            const recoveredKey = `${selectedThreadId}:run:${meta.runId ?? meta.finishedAt}`;
+            if (!attemptedKeysRef.current.has(recoveredKey)) {
+              attemptedKeysRef.current.add(recoveredKey);
+              shouldAttachRun = true;
+            }
           }
-          return;
         }
+
+        if (shouldAttachRun) {
+          const res = await fetch(
+            `/api/chat?threadId=${encodeURIComponent(selectedThreadId)}`,
+            { signal: controller.signal },
+          );
+
+          if (res.ok && res.body) {
+            const current = messagesRef.current;
+            const cutIdx = current.findLastIndex((m) => m.role === "user");
+            const baseMessages = cutIdx >= 0 ? current.slice(0, cutIdx + 1) : current;
+            const reply = new Map<string, Message>();
+            const syncMessages = (message: Message) => {
+              reply.set(message.id, message);
+              setMessages([...baseMessages, ...reply.values()]);
+            };
+
+            await processStreamedMessage({
+              response: res,
+              createMessage: syncMessages,
+              updateMessage: syncMessages,
+              adapter: createAcpStreamAdapter(() => selectedThreadId),
+            });
+
+            if (reply.size > 0) {
+              const finalMessages = [...baseMessages, ...reply.values()];
+              setMessages(finalMessages);
+              await enqueueMessageWrite(selectedThreadId, finalMessages);
+            }
+            return;
+          }
+        }
+
+        if (lastMsg.role !== "user") return;
 
         // Fallback if server restarted: reload from ACP's persisted session store
         const state = acpStore.getState();

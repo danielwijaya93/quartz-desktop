@@ -1,6 +1,7 @@
 "use client";
 
 import type { AttachmentKind } from "@/lib/acp/attachments";
+import type { SyncedState } from "@/lib/acp/sync-store";
 import type {
   AcpAppDataDir,
   AcpCommand,
@@ -8,7 +9,14 @@ import type {
   AcpSessionMcpServer,
   AcpSessionSnapshot,
   PendingPermissionRequest,
+  WorkspaceFolder,
 } from "@/lib/acp/types";
+export type { WorkspaceFolder } from "@/lib/acp/types";
+import {
+  isApplyingRemoteSync,
+  pushSyncWorkspaceState,
+  withRemoteSyncApplied,
+} from "@/lib/client/sync-client";
 import { useSyncExternalStore } from "react";
 
 export interface ComposerAttachment {
@@ -24,13 +32,6 @@ export interface ComposerAttachment {
 export type ImageAttachment = ComposerAttachment;
 
 export type ActiveModalKind = null | "mcp" | "add-folder" | "sessions";
-
-export interface WorkspaceFolder {
-  id: string;
-  name: string;
-  cwd: string;
-  collapsed?: boolean;
-}
 
 export const APP_SLASH_COMMANDS: AcpCommand[] = [
   {
@@ -257,6 +258,25 @@ const INITIAL_STATE: AcpClientState = {
 
 let state: AcpClientState = INITIAL_STATE;
 let autoTitleDepth = 0;
+let workspaceSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleWorkspaceSync(): void {
+  if (typeof window === "undefined" || !state.hydrated || isApplyingRemoteSync()) return;
+  if (workspaceSyncTimer !== null) {
+    clearTimeout(workspaceSyncTimer);
+  }
+  workspaceSyncTimer = setTimeout(() => {
+    workspaceSyncTimer = null;
+    void pushSyncWorkspaceState({
+      folders: state.folders,
+      activeFolderId: state.activeFolderId,
+      threadFolders: state.threadFolderMap,
+      hiddenThreadIds: state.hiddenThreadIds,
+      acpSessionIds: state.acpSessionIds,
+      appDataDirs: state.appDataDirs,
+    });
+  }, 150);
+}
 
 const listeners = new Set<() => void>();
 
@@ -317,6 +337,36 @@ export const acpStore = {
     emit();
   },
 
+  applySyncedWorkspaceState(remote: SyncedState): void {
+    withRemoteSyncApplied(() => {
+      const folders = remote.folders.length > 0 ? remote.folders : state.folders;
+      const activeFolderId =
+        remote.activeFolderId && folders.some((f) => f.id === remote.activeFolderId)
+          ? remote.activeFolderId
+          : state.activeFolderId && folders.some((f) => f.id === state.activeFolderId)
+            ? state.activeFolderId
+            : folders[0]?.id ?? null;
+      const activeFolder = folders.find((f) => f.id === activeFolderId);
+
+      state = {
+        ...state,
+        folders,
+        activeFolderId,
+        cwd: activeFolder?.cwd ?? state.cwd,
+        hasInitializedDefaultFolder:
+          state.hasInitializedDefaultFolder || folders.length > 0,
+        threadFolderMap: { ...state.threadFolderMap, ...remote.threadFolders },
+        hiddenThreadIds: Array.from(
+          new Set([...remote.hiddenThreadIds]),
+        ),
+        acpSessionIds: { ...state.acpSessionIds, ...remote.acpSessionIds },
+        appDataDirs: { ...state.appDataDirs, ...remote.appDataDirs },
+      };
+      persistPrefs();
+      emit();
+    });
+  },
+
   setSnapshot(threadId: string, snapshot: AcpSessionSnapshot): void {
     const nextMap = { ...state.acpSessionIds, [threadId]: snapshot.sessionId };
     const nextAppDataDirs = snapshot.appDataDir
@@ -350,6 +400,7 @@ export const acpStore = {
       appDataDirs: nextAppDataDirs,
     };
     persistPrefs();
+    scheduleWorkspaceSync();
     emit();
   },
 
@@ -458,6 +509,7 @@ export const acpStore = {
         folders: state.folders.map((f) => (f.id === updated.id ? updated : f)),
       };
       persistPrefs();
+      scheduleWorkspaceSync();
       emit();
       return updated;
     }
@@ -483,6 +535,7 @@ export const acpStore = {
       hasInitializedDefaultFolder: true,
     };
     persistPrefs();
+    scheduleWorkspaceSync();
     emit();
     return folder;
   },
@@ -503,6 +556,7 @@ export const acpStore = {
       folders,
     };
     persistPrefs();
+    scheduleWorkspaceSync();
     emit();
   },
 
@@ -551,6 +605,7 @@ export const acpStore = {
       hasInitializedDefaultFolder: true,
     };
     persistPrefs();
+    scheduleWorkspaceSync();
     emit();
   },
 
@@ -574,6 +629,7 @@ export const acpStore = {
       ),
     };
     persistPrefs();
+    scheduleWorkspaceSync();
     emit();
   },
 
@@ -585,6 +641,7 @@ export const acpStore = {
       hiddenThreadIds: [...state.hiddenThreadIds, threadId],
     };
     persistPrefs();
+    scheduleWorkspaceSync();
     emit();
   },
 
@@ -615,6 +672,7 @@ export const acpStore = {
       ),
     };
     persistPrefs();
+    scheduleWorkspaceSync();
     emit();
   },
 

@@ -136,7 +136,9 @@ const SSE_HEADERS = {
 } as const;
 
 export async function GET(req: NextRequest) {
-  const threadId = new URL(req.url).searchParams.get("threadId")?.trim();
+  const url = new URL(req.url);
+  const threadId = url.searchParams.get("threadId")?.trim();
+  const metaOnly = url.searchParams.get("meta") === "1";
   if (!threadId) {
     return new Response(JSON.stringify({ error: "threadId is required." }), {
       status: 400,
@@ -150,6 +152,23 @@ export async function GET(req: NextRequest) {
       status: 404,
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  if (metaOnly) {
+    return new Response(
+      JSON.stringify({
+        runId: entry.activeRun.runId,
+        threadId: entry.activeRun.threadId,
+        done: entry.activeRun.done,
+        startedAt: entry.activeRun.startedAt,
+        finishedAt: entry.activeRun.finishedAt ?? null,
+        eventCount: entry.activeRun.events.length,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   }
 
   return new Response(createRunSseStream(entry.activeRun, req.signal), {

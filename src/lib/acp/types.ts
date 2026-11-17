@@ -1,3 +1,10 @@
+export interface WorkspaceFolder {
+  id: string;
+  name: string;
+  cwd: string;
+  collapsed?: boolean;
+}
+
 export interface AcpCommand {
   name: string;
   description: string;

@@ -54,4 +54,24 @@ describe("run-buffer", () => {
     const text = await readAllText(createRunSseStream(run));
     expect(text).toBe('data: {"type":"TEXT_MESSAGE_CONTENT","delta":"Done"}\n\ndata: [DONE]\n\n');
   });
+
+  it("emits SSE keepalive heartbeats while a background turn is pending", async () => {
+    const run = createBufferedRun("t3", "r3");
+    const stream = createRunSseStream(run, undefined, { heartbeatMs: 15 });
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(decoder.decode(first.value)).toBe(": keepalive\n\n");
+
+    finishBufferedRun(run);
+    let rest = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      rest += decoder.decode(chunk.value, { stream: true });
+    }
+    expect(rest).toContain("data: [DONE]");
+  });
 });
