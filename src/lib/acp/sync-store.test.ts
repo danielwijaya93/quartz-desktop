@@ -85,4 +85,49 @@ describe("sync-store", () => {
     expect(getSyncedMessages("desktop-t", tempDir)).toHaveLength(1);
     expect(getSyncedMessages("mobile-t", tempDir)).toHaveLength(1);
   });
+
+  it("remaps colliding default folder IDs and duplicate-cwd UUIDs during merge", async () => {
+    // Desktop seeded "default" -> /repo-a and "desk-b" -> /repo-b
+    await mergeSyncedState(
+      {
+        threads: [
+          { id: "t-a", title: "Repo A", createdAt: 1000 },
+          { id: "t-b", title: "Repo B", createdAt: 1100 },
+        ],
+        folders: [
+          { id: "default", name: "repo-a", cwd: "/repo-a", collapsed: false },
+          { id: "desk-b", name: "repo-b", cwd: "/repo-b", collapsed: false },
+        ],
+        activeFolderId: "default",
+        threadFolders: { "t-a": "default", "t-b": "desk-b" },
+      },
+      { clientId: "desktop", dataDir: tempDir },
+    );
+
+    // Mobile had "default" -> /repo-c (colliding ID, different cwd) and "mob-b" -> /repo-b (same cwd, different ID)
+    const merged = await mergeSyncedState(
+      {
+        threads: [
+          { id: "t-c", title: "Repo C", createdAt: 2000 },
+          { id: "t-b2", title: "Repo B Mobile", createdAt: 2100 },
+        ],
+        folders: [
+          { id: "default", name: "repo-c", cwd: "/repo-c", collapsed: false },
+          { id: "mob-b", name: "repo-b", cwd: "/repo-b", collapsed: false },
+        ],
+        activeFolderId: "default",
+        threadFolders: { "t-c": "default", "t-b2": "mob-b" },
+      },
+      { clientId: "mobile", dataDir: tempDir },
+    );
+
+    expect(merged.folders).toHaveLength(3);
+    const repoCFolder = merged.folders.find((f) => f.cwd === "/repo-c");
+    expect(repoCFolder).toBeDefined();
+    expect(repoCFolder?.id).not.toBe("default");
+    expect(merged.threadFolders["t-a"]).toBe("default");
+    expect(merged.threadFolders["t-b"]).toBe("desk-b");
+    expect(merged.threadFolders["t-b2"]).toBe("desk-b");
+    expect(merged.threadFolders["t-c"]).toBe(repoCFolder?.id);
+  });
 });

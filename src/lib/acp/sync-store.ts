@@ -332,18 +332,39 @@ export async function mergeSyncedState(
     }
 
     const folderMap = new Map<string, WorkspaceFolder>();
+    const usedFolderIds = new Set<string>();
     for (const f of state.folders) {
       folderMap.set(f.cwd, f);
+      usedFolderIds.add(f.id);
     }
+
+    const incomingIdRemap = new Map<string, string>();
     for (const f of incoming.folders ?? []) {
       if (!f?.id || !f?.cwd) continue;
-      if (!folderMap.has(f.cwd)) {
-        folderMap.set(f.cwd, f);
-        changed = true;
+      const existing = folderMap.get(f.cwd);
+      if (existing) {
+        incomingIdRemap.set(f.id, existing.id);
+        continue;
+      }
+      const nextId = usedFolderIds.has(f.id) ? crypto.randomUUID() : f.id;
+      usedFolderIds.add(nextId);
+      folderMap.set(f.cwd, nextId === f.id ? f : { ...f, id: nextId });
+      incomingIdRemap.set(f.id, nextId);
+      changed = true;
+    }
+
+    const remappedIncomingThreadFolders: Record<string, string> = {};
+    for (const [tid, fid] of Object.entries(incoming.threadFolders ?? {})) {
+      const mappedId = incomingIdRemap.get(fid) ?? fid;
+      if (usedFolderIds.has(mappedId)) {
+        remappedIncomingThreadFolders[tid] = mappedId;
+        if (!(tid in state.threadFolders)) {
+          changed = true;
+        }
       }
     }
 
-    const mergedThreadFolders = { ...(incoming.threadFolders ?? {}), ...state.threadFolders };
+    const mergedThreadFolders = { ...remappedIncomingThreadFolders, ...state.threadFolders };
     const mergedAcpSessionIds = { ...(incoming.acpSessionIds ?? {}), ...state.acpSessionIds };
     const mergedAppDataDirs = { ...(incoming.appDataDirs ?? {}), ...state.appDataDirs };
     const hiddenSet = new Set<string>([
@@ -367,7 +388,16 @@ export async function mergeSyncedState(
     );
     const mergedFolders = Array.from(folderMap.values());
     const mergedHidden = Array.from(hiddenSet);
-    const activeFolderId = state.activeFolderId ?? incoming.activeFolderId ?? mergedFolders[0]?.id ?? null;
+    const remappedIncomingActive = incoming.activeFolderId
+      ? (incomingIdRemap.get(incoming.activeFolderId) ?? incoming.activeFolderId)
+      : null;
+    const activeFolderId =
+      state.activeFolderId ??
+      (remappedIncomingActive && usedFolderIds.has(remappedIncomingActive)
+        ? remappedIncomingActive
+        : null) ??
+      mergedFolders[0]?.id ??
+      null;
 
     if (!changed && state.version > 0) {
       return state;

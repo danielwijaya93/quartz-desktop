@@ -348,6 +348,14 @@ export const acpStore = {
             : folders[0]?.id ?? null;
       const activeFolder = folders.find((f) => f.id === activeFolderId);
 
+      const validFolderIds = new Set(folders.map((f) => f.id));
+      const cleanedLocalMap: Record<string, string> = {};
+      for (const [tid, fid] of Object.entries(state.threadFolderMap)) {
+        if (validFolderIds.has(fid)) {
+          cleanedLocalMap[tid] = fid;
+        }
+      }
+
       state = {
         ...state,
         folders,
@@ -355,7 +363,7 @@ export const acpStore = {
         cwd: activeFolder?.cwd ?? state.cwd,
         hasInitializedDefaultFolder:
           state.hasInitializedDefaultFolder || folders.length > 0,
-        threadFolderMap: { ...state.threadFolderMap, ...remote.threadFolders },
+        threadFolderMap: { ...cleanedLocalMap, ...remote.threadFolders },
         hiddenThreadIds: Array.from(
           new Set([...remote.hiddenThreadIds]),
         ),
