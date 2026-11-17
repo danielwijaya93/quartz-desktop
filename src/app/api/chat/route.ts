@@ -15,13 +15,14 @@ import {
   getExistingAcpSession,
   getOrCreateAcpSession,
 } from "@/lib/acp/session-manager";
-import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
+import type { AcpAgentId, AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
 import { executeWorkspaceShell, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import {
   buildShellResultOpenUILang,
   buildStatusCardOpenUILang,
   buildUsageCardOpenUILang,
 } from "@/lib/openui/lang-helpers";
+import { getOpenUISystemPrompt } from "@/lib/openui/prompt";
 import * as acp from "@agentclientprotocol/sdk";
 import { EventType } from "@openuidev/react-headless";
 import type { NextRequest } from "next/server";
@@ -46,6 +47,7 @@ interface ChatRequestBody {
   threadId?: string;
   runId?: string;
   messages?: IncomingMessage[];
+  agent?: AcpAgentId;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
   cwd?: string;
@@ -213,6 +215,7 @@ export async function POST(req: NextRequest) {
   try {
     sessionEntry = await getOrCreateAcpSession({
       threadId,
+      agent: body.agent,
       acpSessionId: body.acpSessionId,
       appDataDir: body.appDataDir,
       cwd,
@@ -226,6 +229,7 @@ export async function POST(req: NextRequest) {
     if (body.acpSessionId) {
       sessionEntry = await getOrCreateAcpSession({
         threadId,
+        agent: body.agent,
         cwd,
         additionalDirectories: body.additionalDirectories,
         mcpServers: body.mcpServers,
@@ -443,11 +447,17 @@ export async function POST(req: NextRequest) {
         }
       };
 
+      const shouldInjectOpenUI =
+        sessionEntry.agent === "quartz" && !sessionEntry.hasInjectedOpenUIPrompt;
+      const effectiveText = shouldInjectOpenUI
+        ? `${getOpenUISystemPrompt()}\n\n${trimmedText || "Analyze the attached file(s)."}`
+        : trimmedText;
+
       const { blocks: attachmentBlocks, hasBinaryBlobs } =
         buildPromptBlocksFromAttachments(fileAttachments);
       const promptBlocks: acp.ContentBlock[] = [];
-      if (trimmedText) {
-        promptBlocks.push({ type: "text", text: trimmedText });
+      if (effectiveText) {
+        promptBlocks.push({ type: "text", text: effectiveText });
       }
       for (const img of messageImages) {
         promptBlocks.push({
@@ -457,6 +467,10 @@ export async function POST(req: NextRequest) {
         });
       }
       promptBlocks.push(...attachmentBlocks);
+
+      if (shouldInjectOpenUI) {
+        sessionEntry.hasInjectedOpenUIPrompt = true;
+      }
 
       void (async () => {
         let tempAttachmentDir: string | null = null;
@@ -478,8 +492,8 @@ export async function POST(req: NextRequest) {
             const fallback = await buildFallbackBlocksWithTempFiles(fileAttachments);
             tempAttachmentDir = fallback.tempDir;
             const fallbackPrompt: acp.ContentBlock[] = [];
-            if (trimmedText) {
-              fallbackPrompt.push({ type: "text", text: trimmedText });
+            if (effectiveText) {
+              fallbackPrompt.push({ type: "text", text: effectiveText });
             }
             for (const img of messageImages) {
               fallbackPrompt.push({

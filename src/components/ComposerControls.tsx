@@ -1,5 +1,6 @@
 "use client";
 
+import type { AcpAgentId } from "@/lib/acp/types";
 import {
   FALLBACK_MODELS,
   FALLBACK_MODES,
@@ -7,17 +8,19 @@ import {
   findConfigOption,
   formatContextPercent,
   resolveChoiceName,
+  switchAcpSessionAgent,
   updateAcpSessionConfig,
   useAcpSessionBootstrap,
   type AcpConfigKey,
 } from "@/lib/client/acp-session-controls";
 import {
   getBootstrapThreadKey,
+  selectEffectiveAgent,
   selectEffectiveSnapshot,
   useAcpStore,
 } from "@/lib/client/acp-store";
 import { useThreadList } from "@openuidev/react-headless";
-import { Check, ChevronDown, Shield } from "lucide-react";
+import { Bot, Check, ChevronDown, Shield } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 interface ToggleEventLike extends Event {
@@ -34,12 +37,14 @@ export function ComposerConfigControls() {
   const effectiveThreadId = selectedThreadId || getBootstrapThreadKey(activeFolderId);
 
   const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
+  const activeAgent = useAcpStore((s) => selectEffectiveAgent(s, selectedThreadId));
   const hydrated = useAcpStore((s) => s.hydrated);
   const preferredModel = useAcpStore((s) => s.preferredModel);
   const preferredThoughtLevel = useAcpStore((s) => s.preferredThoughtLevel);
   const preferredMode = useAcpStore((s) => s.preferredMode);
 
   const [updatingConfig, setUpdatingConfig] = useState<AcpConfigKey | null>(null);
+  const [switchingAgent, setSwitchingAgent] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
 
   const panelId = useId();
@@ -98,6 +103,16 @@ export function ComposerConfigControls() {
     }
   };
 
+  const handleAgentChange = async (agent: AcpAgentId) => {
+    if (agent === activeAgent) return;
+    setSwitchingAgent(true);
+    try {
+      await switchAcpSessionAgent(effectiveThreadId, agent);
+    } finally {
+      setSwitchingAgent(false);
+    }
+  };
+
   const closePopover = () => {
     const panel = popoverRef.current;
     if (panel && typeof panel.hidePopover === "function" && popoverOpen) {
@@ -107,6 +122,26 @@ export function ComposerConfigControls() {
 
   return (
     <>
+      <label className="inline-flex min-h-[28px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2 py-1 text-xs opacity-85 hover:opacity-100">
+        <Bot className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
+        <select
+          aria-label="Coding agent"
+          value={activeAgent}
+          disabled={switchingAgent}
+          onChange={(e) => void handleAgentChange(e.target.value as AcpAgentId)}
+          className="bg-transparent font-medium outline-none cursor-pointer"
+        >
+          <option value="agy" className="bg-white dark:bg-zinc-900">
+            agy
+          </option>
+          <option value="quartz" className="bg-white dark:bg-zinc-900">
+            quartz
+          </option>
+        </select>
+      </label>
+
+      {activeAgent === "agy" && (
+        <>
       <button
         ref={triggerRef}
         type="button"
@@ -217,6 +252,8 @@ export function ComposerConfigControls() {
           ))}
         </select>
       </label>
+        </>
+      )}
     </>
   );
 }

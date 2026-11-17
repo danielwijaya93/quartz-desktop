@@ -1,7 +1,7 @@
 "use client";
 
 import type { SyncedState, SyncedThread } from "@/lib/acp/sync-store";
-import type { AcpAppDataDir, WorkspaceFolder } from "@/lib/acp/types";
+import type { AcpAgentId, AcpAppDataDir, WorkspaceFolder } from "@/lib/acp/types";
 import type { Message } from "@openuidev/react-headless";
 
 let tabClientId: string | null = null;
@@ -90,6 +90,7 @@ export async function pushSyncWorkspaceState(patch: {
   hiddenThreadIds?: string[];
   acpSessionIds?: Record<string, string>;
   appDataDirs?: Record<string, AcpAppDataDir>;
+  threadAgents?: Record<string, AcpAgentId>;
 }): Promise<SyncedState | null> {
   return postSync({ action: "updateWorkspaceState", patch });
 }
@@ -102,6 +103,7 @@ export async function mergeLocalWithServerSync(incoming: {
   hiddenThreadIds?: string[];
   acpSessionIds?: Record<string, string>;
   appDataDirs?: Record<string, AcpAppDataDir>;
+  threadAgents?: Record<string, AcpAgentId>;
   messagesByThread?: Record<string, Message[]>;
 }): Promise<SyncedState | null> {
   return postSync({ action: "merge", incoming });

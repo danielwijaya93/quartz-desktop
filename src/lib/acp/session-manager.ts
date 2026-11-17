@@ -5,6 +5,7 @@ import {
   inferMimeType,
 } from "@/lib/acp/attachments";
 import type {
+  AcpAgentId,
   AcpAppDataDir,
   AcpCommand,
   AcpConfigOption,
@@ -58,7 +59,9 @@ interface PendingPermissionEntry {
 export interface AcpSessionEntry {
   threadId: string;
   sessionId: string;
+  agent: AcpAgentId;
   appDataDir: AcpAppDataDir;
+  hasInjectedOpenUIPrompt?: boolean;
   child: ChildProcessWithoutNullStreams;
   connection: acp.ClientConnection;
   cwd: string;
@@ -89,6 +92,7 @@ export interface AcpSessionEntry {
 
 export interface GetOrCreateSessionOptions {
   threadId: string;
+  agent?: AcpAgentId;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
   cwd?: string;
@@ -326,6 +330,7 @@ export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot
   return {
     threadId: entry.threadId,
     sessionId: entry.sessionId,
+    agent: entry.agent,
     appDataDir: entry.appDataDir,
     cwd: entry.cwd,
     additionalDirectories: entry.additionalDirectories,
@@ -342,7 +347,27 @@ export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot
   };
 }
 
+/** Builds the CLI command and arguments for spawning an ACP coding agent process. */
+export function buildAgentSpawnSpec(params: {
+  agent: AcpAgentId;
+  additionalDirectories: string[];
+  appDataDir?: AcpAppDataDir;
+}): { command: string; args: string[] } {
+  if (params.agent === "quartz") {
+    return { command: "quartz", args: ["acp"] };
+  }
+  const args = ["acp", "--disable-telemetry"];
+  if (params.appDataDir && params.appDataDir !== "antigravity-cli") {
+    args.push("--app-data-dir", params.appDataDir);
+  }
+  for (const dir of params.additionalDirectories) {
+    args.push("--add-dir", dir);
+  }
+  return { command: "agy", args };
+}
+
 function spawnAcpConnection(params: {
+  agent: AcpAgentId;
   cwd: string;
   additionalDirectories: string[];
   appDataDir?: AcpAppDataDir;
@@ -352,15 +377,13 @@ function spawnAcpConnection(params: {
   child: ChildProcessWithoutNullStreams;
   connection: acp.ClientConnection;
 } {
-  const args = ["acp", "--disable-telemetry"];
-  if (params.appDataDir && params.appDataDir !== "antigravity-cli") {
-    args.push("--app-data-dir", params.appDataDir);
-  }
-  for (const dir of params.additionalDirectories) {
-    args.push("--add-dir", dir);
-  }
+  const { command, args } = buildAgentSpawnSpec({
+    agent: params.agent,
+    additionalDirectories: params.additionalDirectories,
+    appDataDir: params.appDataDir,
+  });
 
-  const child = spawn("agy", args, {
+  const child = spawn(command, args, {
     cwd: params.cwd,
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -513,14 +536,17 @@ async function applyConfigSafely(
 async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<AcpSessionEntry> {
   evictOldestIfFull();
 
+  const agent: AcpAgentId = options.agent === "quartz" ? "quartz" : "agy";
   const cwd = resolveWorkspaceDir(options.cwd);
-  const additionalDirectories = resolveAcpAdditionalDirs(options.additionalDirectories);
-  const mcpServers = options.mcpServers ?? [];
+  const additionalDirectories =
+    agent === "agy" ? resolveAcpAdditionalDirs(options.additionalDirectories) : [];
+  const mcpServers = agent === "agy" ? (options.mcpServers ?? []) : [];
   const appDataDir = detectSessionAppDataDir(options.acpSessionId, options.appDataDir);
 
   let entryRef: AcpSessionEntry | undefined;
 
   const { child, connection } = spawnAcpConnection({
+    agent,
     cwd,
     additionalDirectories,
     appDataDir,
@@ -559,7 +585,9 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     const entry: AcpSessionEntry = {
       threadId: options.threadId,
       sessionId: "",
+      agent,
       appDataDir,
+      hasInjectedOpenUIPrompt: Boolean(options.acpSessionId),
       child,
       connection,
       cwd,
@@ -575,67 +603,80 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     };
     entryRef = entry;
 
+    const newSessionParams: acp.NewSessionRequest =
+      agent === "quartz"
+        ? { cwd, mcpServers: [] }
+        : {
+            cwd,
+            additionalDirectories,
+            mcpServers: acpMcpServers,
+            _meta: {
+              antigravity: {
+                systemPrompt: { append: systemPromptAppend },
+              },
+            },
+          };
+
     let sessionResp: acp.NewSessionResponse | acp.LoadSessionResponse | acp.ResumeSessionResponse;
     if (options.acpSessionId) {
       try {
-        sessionResp = await connection.agent.request(acp.AGENT_METHODS.session_load, {
-          sessionId: options.acpSessionId,
-          cwd,
-          additionalDirectories,
-          mcpServers: acpMcpServers,
-          _meta: {
-            antigravity: {
-              systemPrompt: { append: systemPromptAppend },
-            },
-          },
-        });
+        const loadSessionParams: acp.LoadSessionRequest =
+          agent === "quartz"
+            ? { sessionId: options.acpSessionId, cwd, mcpServers: [] }
+            : {
+                sessionId: options.acpSessionId,
+                cwd,
+                additionalDirectories,
+                mcpServers: acpMcpServers,
+                _meta: {
+                  antigravity: {
+                    systemPrompt: { append: systemPromptAppend },
+                  },
+                },
+              };
+        sessionResp = await connection.agent.request(
+          acp.AGENT_METHODS.session_load,
+          loadSessionParams,
+        );
         entry.sessionId = options.acpSessionId;
       } catch {
-        const created = await connection.agent.request(acp.AGENT_METHODS.session_new, {
-          cwd,
-          additionalDirectories,
-          mcpServers: acpMcpServers,
-          _meta: {
-            antigravity: {
-              systemPrompt: { append: systemPromptAppend },
-            },
-          },
-        });
+        const created = await connection.agent.request(
+          acp.AGENT_METHODS.session_new,
+          newSessionParams,
+        );
         entry.sessionId = created.sessionId;
+        entry.hasInjectedOpenUIPrompt = false;
         sessionResp = created;
       }
     } else {
-      const created = await connection.agent.request(acp.AGENT_METHODS.session_new, {
-        cwd,
-        additionalDirectories,
-        mcpServers: acpMcpServers,
-        _meta: {
-          antigravity: {
-            systemPrompt: { append: systemPromptAppend },
-          },
-        },
-      });
+      const created = await connection.agent.request(
+        acp.AGENT_METHODS.session_new,
+        newSessionParams,
+      );
       entry.sessionId = created.sessionId;
+      entry.hasInjectedOpenUIPrompt = false;
       sessionResp = created;
     }
     entry.replayCollector = undefined;
     applySessionResponseMetadata(entry, sessionResp as SessionResponseWithModels);
 
-    // Default to `auto` mode per configuration unless explicitly overridden
-    const targetMode = options.mode ?? "auto";
-    if (targetMode && entry.modes?.currentModeId !== targetMode) {
-      await applyConfigSafely(entry, "mode", targetMode);
-    }
-    if (options.model) {
-      await applyConfigSafely(entry, "model", options.model);
-    }
-    if (options.thoughtLevel) {
-      await applyConfigSafely(entry, "thought_level", options.thoughtLevel);
-    }
+    if (agent === "agy") {
+      // Default to `auto` mode per configuration unless explicitly overridden
+      const targetMode = options.mode ?? "auto";
+      if (targetMode && entry.modes?.currentModeId !== targetMode) {
+        await applyConfigSafely(entry, "mode", targetMode);
+      }
+      if (options.model) {
+        await applyConfigSafely(entry, "model", options.model);
+      }
+      if (options.thoughtLevel) {
+        await applyConfigSafely(entry, "thought_level", options.thoughtLevel);
+      }
 
-    // Give initial session/update notifications (e.g. available_commands_update) a tick to settle
-    if (entry.commands.length === 0) {
-      await new Promise((r) => setTimeout(r, 150));
+      // Give initial session/update notifications (e.g. available_commands_update) a tick to settle
+      if (entry.commands.length === 0) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
     }
 
     SESSIONS.set(options.threadId, entry);
@@ -644,6 +685,7 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     disposeEntry({
       threadId: options.threadId,
       sessionId: "",
+      agent,
       appDataDir,
       child,
       connection,
@@ -669,8 +711,13 @@ export async function getOrCreateAcpSession(
 
   const existing = SESSIONS.get(options.threadId);
   if (existing && !existing.child.killed) {
-    existing.lastUsed = now;
-    return existing;
+    if (options.agent && existing.agent !== options.agent) {
+      disposeEntry(existing);
+      SESSIONS.delete(options.threadId);
+    } else {
+      existing.lastUsed = now;
+      return existing;
+    }
   }
 
   let pending = CREATING.get(options.threadId);
@@ -764,6 +811,7 @@ async function listSessionsFromStore(
   appDataDir: AcpAppDataDir,
 ): Promise<HistoricalAcpSession[]> {
   const { child, connection } = spawnAcpConnection({
+    agent: "agy",
     cwd: resolvedCwd,
     additionalDirectories: [],
     appDataDir,
@@ -865,6 +913,7 @@ async function attemptLoadHistoricalSession(params: {
   let entryRef: AcpSessionEntry | undefined;
 
   const { child, connection } = spawnAcpConnection({
+    agent: "agy",
     cwd: params.cwd,
     additionalDirectories: params.additionalDirectories,
     appDataDir: params.appDataDir,
@@ -887,6 +936,7 @@ async function attemptLoadHistoricalSession(params: {
     const entry: AcpSessionEntry = {
       threadId: params.threadId,
       sessionId: params.acpSessionId,
+      agent: "agy",
       appDataDir: params.appDataDir,
       child,
       connection,
@@ -945,6 +995,7 @@ async function attemptLoadHistoricalSession(params: {
     disposeEntry({
       threadId: params.threadId,
       sessionId: params.acpSessionId,
+      agent: "agy",
       appDataDir: params.appDataDir,
       child,
       connection,

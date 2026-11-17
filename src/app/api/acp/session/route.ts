@@ -8,7 +8,7 @@ import {
   resetAcpSession,
   setAcpConfigOption,
 } from "@/lib/acp/session-manager";
-import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
+import type { AcpAgentId, AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     action?: string;
     threadId?: string;
+    agent?: AcpAgentId;
     acpSessionId?: string;
     appDataDir?: AcpAppDataDir;
     cwd?: string;
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
       case "init": {
         const entry = await getOrCreateAcpSession({
           threadId,
+          agent: body.agent,
           acpSessionId: body.acpSessionId,
           appDataDir: body.appDataDir,
           cwd: body.cwd,
@@ -89,9 +91,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ snapshot });
       }
 
-      case "updateWorkspace": {
+      case "updateWorkspace":
+      case "switchAgent": {
         const entry = await resetAcpSession({
           threadId,
+          agent: body.agent,
           cwd: body.cwd,
           additionalDirectories: body.additionalDirectories,
           mcpServers: body.mcpServers,

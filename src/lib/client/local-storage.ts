@@ -1,7 +1,7 @@
 "use client";
 
 import type { AcpSessionSnapshot, ReplayedTranscriptMessage } from "@/lib/acp/types";
-import { acpStore } from "@/lib/client/acp-store";
+import { acpStore, selectEffectiveAgent } from "@/lib/client/acp-store";
 import { createAcpStreamAdapter } from "@/lib/client/acp-stream-adapter";
 import {
   fetchRemoteMessages,
@@ -391,6 +391,7 @@ export function createAntigravityChatBindings(): {
           requestThreadId = threadId;
           mergedBody = JSON.stringify({
             ...parsed,
+            agent: selectEffectiveAgent(state, threadId),
             acpSessionId: state.acpSessionIds[threadId],
             appDataDir: state.appDataDirs[threadId],
             cwd: state.cwd || undefined,

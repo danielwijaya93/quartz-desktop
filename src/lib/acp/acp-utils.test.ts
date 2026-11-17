@@ -1,5 +1,6 @@
 import { parseAgyMcpListOutput } from "@/lib/acp/mcp-cli";
 import {
+  buildAgentSpawnSpec,
   convertReplayedUpdatesToMessages,
   detectSessionAppDataDir,
 } from "@/lib/acp/session-manager";
@@ -206,5 +207,29 @@ describe("detectSessionAppDataDir", () => {
 
     expect(resolveAcpAdditionalDirs([], home)).toEqual([promptsDir]);
     expect(resolveAcpAdditionalDirs([promptsDir], home)).toEqual([promptsDir]);
+  });
+
+  it("builds spawn specs for agy and quartz ACP agents", () => {
+    expect(
+      buildAgentSpawnSpec({
+        agent: "agy",
+        additionalDirectories: ["/tmp/extra"],
+        appDataDir: "antigravity",
+      }),
+    ).toEqual({
+      command: "agy",
+      args: ["acp", "--disable-telemetry", "--app-data-dir", "antigravity", "--add-dir", "/tmp/extra"],
+    });
+
+    expect(
+      buildAgentSpawnSpec({
+        agent: "quartz",
+        additionalDirectories: ["/tmp/extra"],
+        appDataDir: "antigravity",
+      }),
+    ).toEqual({
+      command: "quartz",
+      args: ["acp"],
+    });
   });
 });
