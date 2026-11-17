@@ -22,7 +22,6 @@ import {
   buildStatusCardOpenUILang,
   buildUsageCardOpenUILang,
 } from "@/lib/openui/lang-helpers";
-import { getOpenUISystemPrompt } from "@/lib/openui/prompt";
 import * as acp from "@agentclientprotocol/sdk";
 import { EventType } from "@openuidev/react-headless";
 import type { NextRequest } from "next/server";
@@ -447,17 +446,11 @@ export async function POST(req: NextRequest) {
         }
       };
 
-      const shouldInjectOpenUI =
-        sessionEntry.agent === "quartz" && !sessionEntry.hasInjectedOpenUIPrompt;
-      const effectiveText = shouldInjectOpenUI
-        ? `${getOpenUISystemPrompt()}\n\n${trimmedText || "Analyze the attached file(s)."}`
-        : trimmedText;
-
       const { blocks: attachmentBlocks, hasBinaryBlobs } =
         buildPromptBlocksFromAttachments(fileAttachments);
       const promptBlocks: acp.ContentBlock[] = [];
-      if (effectiveText) {
-        promptBlocks.push({ type: "text", text: effectiveText });
+      if (trimmedText) {
+        promptBlocks.push({ type: "text", text: trimmedText });
       }
       for (const img of messageImages) {
         promptBlocks.push({
@@ -467,10 +460,6 @@ export async function POST(req: NextRequest) {
         });
       }
       promptBlocks.push(...attachmentBlocks);
-
-      if (shouldInjectOpenUI) {
-        sessionEntry.hasInjectedOpenUIPrompt = true;
-      }
 
       void (async () => {
         let tempAttachmentDir: string | null = null;
@@ -492,8 +481,8 @@ export async function POST(req: NextRequest) {
             const fallback = await buildFallbackBlocksWithTempFiles(fileAttachments);
             tempAttachmentDir = fallback.tempDir;
             const fallbackPrompt: acp.ContentBlock[] = [];
-            if (effectiveText) {
-              fallbackPrompt.push({ type: "text", text: effectiveText });
+            if (trimmedText) {
+              fallbackPrompt.push({ type: "text", text: trimmedText });
             }
             for (const img of messageImages) {
               fallbackPrompt.push({

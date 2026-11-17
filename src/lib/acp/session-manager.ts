@@ -61,7 +61,6 @@ export interface AcpSessionEntry {
   sessionId: string;
   agent: AcpAgentId;
   appDataDir: AcpAppDataDir;
-  hasInjectedOpenUIPrompt?: boolean;
   child: ChildProcessWithoutNullStreams;
   connection: acp.ClientConnection;
   cwd: string;
@@ -587,7 +586,6 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
       sessionId: "",
       agent,
       appDataDir,
-      hasInjectedOpenUIPrompt: Boolean(options.acpSessionId),
       child,
       connection,
       cwd,
@@ -605,7 +603,13 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
 
     const newSessionParams: acp.NewSessionRequest =
       agent === "quartz"
-        ? { cwd, mcpServers: [] }
+        ? {
+            cwd,
+            mcpServers: [],
+            _meta: {
+              systemPrompt: { append: systemPromptAppend },
+            },
+          }
         : {
             cwd,
             additionalDirectories,
@@ -622,7 +626,14 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
       try {
         const loadSessionParams: acp.LoadSessionRequest =
           agent === "quartz"
-            ? { sessionId: options.acpSessionId, cwd, mcpServers: [] }
+            ? {
+                sessionId: options.acpSessionId,
+                cwd,
+                mcpServers: [],
+                _meta: {
+                  systemPrompt: { append: systemPromptAppend },
+                },
+              }
             : {
                 sessionId: options.acpSessionId,
                 cwd,
@@ -645,7 +656,6 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
           newSessionParams,
         );
         entry.sessionId = created.sessionId;
-        entry.hasInjectedOpenUIPrompt = false;
         sessionResp = created;
       }
     } else {
@@ -654,7 +664,6 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
         newSessionParams,
       );
       entry.sessionId = created.sessionId;
-      entry.hasInjectedOpenUIPrompt = false;
       sessionResp = created;
     }
     entry.replayCollector = undefined;
