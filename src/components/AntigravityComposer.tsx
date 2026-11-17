@@ -180,8 +180,20 @@ export function AntigravityComposer({
   useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
-    el.style.height = "0px";
-    el.style.height = `${Math.max(el.scrollHeight, 32)}px`;
+    const syncHeight = () => {
+      const maxHeight =
+        typeof window !== "undefined"
+          ? Math.max(96, Math.min(200, Math.round(window.innerHeight * 0.35)))
+          : 200;
+      el.style.height = "auto";
+      const naturalHeight = Math.max(el.scrollHeight, 32);
+      const clampedHeight = Math.min(naturalHeight, maxHeight);
+      el.style.height = `${clampedHeight}px`;
+      el.style.overflowY = naturalHeight > maxHeight ? "auto" : "hidden";
+    };
+    syncHeight();
+    window.addEventListener("resize", syncHeight);
+    return () => window.removeEventListener("resize", syncHeight);
   }, [textContent]);
 
   const executeLocalAppCommand = useCallback(

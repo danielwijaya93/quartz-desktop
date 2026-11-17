@@ -44,6 +44,14 @@ dialog::backdrop {
   overflow: visible;
 }
 
+.openui-agent-thread-composer__input-wrapper.antigravity-composer-stack
+  .openui-agent-thread-composer__input {
+  resize: none;
+  min-height: 32px;
+  max-height: min(200px, 35dvh);
+  overscroll-behavior: contain;
+}
+
 .antigravity-model-popover[popover] {
   overscroll-behavior: contain;
 }
