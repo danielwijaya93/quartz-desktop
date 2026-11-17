@@ -46,6 +46,8 @@ dialog::backdrop {
 
 .openui-agent-thread-composer__input-wrapper.antigravity-composer-stack
   .openui-agent-thread-composer__input {
+  flex: 0 0 auto;
+  width: 100%;
   resize: none;
   min-height: 32px;
   max-height: min(200px, 35dvh);
