@@ -10,10 +10,7 @@ import { useThreadList, type Thread } from "@openuidev/react-headless";
 import { useNav } from "@openuidev/react-ui";
 import {
   ChevronRight,
-  Folder,
-  FolderOpen,
   FolderPlus,
-  MessageCircle,
   Pencil,
   Plus,
   Trash2,
@@ -67,6 +64,19 @@ export function FolderSidebar() {
     [threads, folders, threadFolderMap, hiddenThreadIds, activeFolderId],
   );
 
+  // Sort folders with threads (or currently active empty workspace) above empty (0) folders
+  const sortedFolders = useMemo(() => {
+    return [...folders].sort((a, b) => {
+      const aCount = (byFolder[a.id] ?? []).length;
+      const bCount = (byFolder[b.id] ?? []).length;
+      const aHasWork = aCount > 0 || a.id === activeFolderId ? 1 : 0;
+      const bHasWork = bCount > 0 || b.id === activeFolderId ? 1 : 0;
+      if (aHasWork !== bHasWork) return bHasWork - aHasWork;
+      if ((aCount > 0) !== (bCount > 0)) return aCount > 0 ? -1 : 1;
+      return 0;
+    });
+  }, [folders, byFolder, activeFolderId]);
+
   const focusComposer = () => {
     requestAnimationFrame(() => {
       document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Message input']")?.focus();
@@ -110,26 +120,29 @@ export function FolderSidebar() {
   return (
     <div className="openui-agent-thread-list" aria-label="Workspace folders and threads">
       <div className="openui-agent-thread-list-content">
-        <div className="flex items-center justify-between px-1 pb-1">
-          <span className="openui-agent-thread-list-group !p-0">Folders</span>
+        <div className="flex items-center justify-between px-1.5 pb-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wider opacity-50">
+            Workspaces
+          </span>
           <button
             type="button"
             onClick={() => acpStore.setActiveModal("add-folder")}
             aria-label="Add workspace folder"
-            className="inline-flex min-h-[26px] items-center gap-1 rounded-md border border-black/10 dark:border-white/15 px-2 py-0.5 text-[11px] font-medium opacity-80 hover:bg-black/5 dark:hover:bg-white/10 hover:opacity-100"
+            title="Add workspace folder"
+            className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium opacity-65 transition-colors hover:bg-black/[0.06] hover:opacity-100 dark:hover:bg-white/[0.08]"
           >
-            <FolderPlus className="h-3.5 w-3.5" aria-hidden="true" />
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             <span>Add</span>
           </button>
         </div>
 
         {showSkeleton ? (
-          <div className="space-y-2 px-1 py-2 text-xs opacity-60" role="status" aria-live="polite">
-            Loading folders...
+          <div className="space-y-2 px-1.5 py-2 text-xs opacity-60" role="status" aria-live="polite">
+            Loading workspaces...
           </div>
-        ) : folders.length === 0 ? (
+        ) : sortedFolders.length === 0 ? (
           <div className="rounded-xl border border-dashed border-black/15 dark:border-white/15 p-3 text-center text-xs">
-            <p className="opacity-70">No folders in sidebar yet.</p>
+            <p className="opacity-70">No workspaces in sidebar yet.</p>
             <button
               type="button"
               onClick={() => acpStore.setActiveModal("add-folder")}
@@ -140,18 +153,21 @@ export function FolderSidebar() {
             </button>
           </div>
         ) : (
-          <ul className="space-y-1.5">
-            {folders.map((folder) => {
+          <ul className="space-y-1">
+            {sortedFolders.map((folder) => {
               const folderThreads = byFolder[folder.id] ?? [];
               const isActive = folder.id === activeFolderId;
               const isExpanded = !folder.collapsed;
+              const hasSelectedThreadInside = folderThreads.some(
+                (t) => t.id === selectedThreadId,
+              );
 
               return (
                 <li key={folder.id} className="space-y-0.5">
                   <div
-                    className={`group flex items-center gap-1 rounded-lg px-1 py-1 transition-colors ${
-                      isActive
-                        ? "bg-black/[0.06] dark:bg-white/[0.08]"
+                    className={`group flex items-center gap-0.5 rounded-md px-1 py-0.5 transition-colors ${
+                      isActive && !hasSelectedThreadInside
+                        ? "bg-black/[0.04] dark:bg-white/[0.05]"
                         : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                     }`}
                   >
@@ -160,7 +176,7 @@ export function FolderSidebar() {
                       aria-expanded={isExpanded}
                       aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}`}
                       onClick={() => acpStore.toggleFolderCollapsed(folder.id)}
-                      className="inline-flex min-h-[24px] min-w-[24px] shrink-0 items-center justify-center rounded-md opacity-70 hover:bg-black/5 dark:hover:bg-white/10 hover:opacity-100"
+                      className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded opacity-55 hover:opacity-100"
                     >
                       <ChevronRight
                         className={`h-3.5 w-3.5 motion-safe:transition-transform ${
@@ -172,113 +188,115 @@ export function FolderSidebar() {
 
                     <button
                       type="button"
+                      title={`${folder.name} (${folder.cwd})`}
                       onClick={() => acpStore.selectFolder(folder.id, { expand: true })}
-                      className="flex min-h-[24px] flex-1 min-w-0 items-center gap-1.5 rounded-md px-1 text-left text-xs"
+                      className={`flex min-h-[26px] flex-1 min-w-0 items-center gap-1.5 rounded px-1 text-left text-[13px] transition-opacity ${
+                        isActive
+                          ? "font-semibold opacity-100"
+                          : folderThreads.length > 0
+                            ? "font-medium opacity-85 hover:opacity-100"
+                            : "font-normal opacity-55 hover:opacity-90"
+                      }`}
                     >
-                      {isExpanded && isActive ? (
-                        <FolderOpen className="h-3.5 w-3.5 shrink-0 opacity-85" aria-hidden="true" />
-                      ) : (
-                        <Folder className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden="true" />
+                      <span className="truncate">{folder.name}</span>
+                      {folderThreads.length > 0 && (
+                        <span className="ml-auto shrink-0 rounded-full bg-black/[0.05] dark:bg-white/[0.08] px-1.5 py-0.2 text-[10px] font-medium tabular-nums opacity-70 group-hover:hidden">
+                          {folderThreads.length}
+                        </span>
                       )}
-                      <span className="truncate font-medium">{folder.name}</span>
-                      <span className="ml-auto shrink-0 text-[10px] tabular-nums opacity-55">
-                        {folderThreads.length}
-                      </span>
                     </button>
 
-                    <button
-                      type="button"
-                      aria-label={`New thread in ${folder.name}`}
-                      onClick={() => handleNewThreadInFolder(folder)}
-                      className="inline-flex min-h-[24px] min-w-[24px] shrink-0 items-center justify-center rounded-md opacity-70 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100"
-                    >
-                      <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
+                    <div className="flex shrink-0 items-center opacity-70 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity">
+                      <button
+                        type="button"
+                        aria-label={`New thread in ${folder.name}`}
+                        title={`New chat in ${folder.name}`}
+                        onClick={() => handleNewThreadInFolder(folder)}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-75 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100"
+                      >
+                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
 
-                    <button
-                      type="button"
-                      aria-label={`Remove folder ${folder.name} from sidebar`}
-                      onClick={() => handleRemoveFolder(folder, folderThreads)}
-                      className="inline-flex min-h-[24px] min-w-[24px] shrink-0 items-center justify-center rounded-md opacity-0 group-hover:opacity-70 group-focus-within:opacity-70 focus-visible:opacity-100 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100"
-                    >
-                      <Trash2 className="h-3 w-3" aria-hidden="true" />
-                    </button>
+                      <button
+                        type="button"
+                        aria-label={`Remove folder ${folder.name} from sidebar`}
+                        title={`Hide ${folder.name}`}
+                        onClick={() => handleRemoveFolder(folder, folderThreads)}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-70 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100"
+                      >
+                        <Trash2 className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
 
-                  {isExpanded && (
-                    <ul className="ml-3 space-y-0.5 border-l border-black/10 dark:border-white/10 pl-2">
-                      {folderThreads.length === 0 ? (
-                        <li className="px-2 py-1 text-[11px] opacity-50">
-                          No threads in this folder
-                        </li>
-                      ) : (
-                        folderThreads.map((thread) => {
-                          const selected = selectedThreadId === thread.id;
-                          const isRenaming = renamingThreadId === thread.id;
+                  {isExpanded && folderThreads.length > 0 && (
+                    <ul className="ml-3 space-y-0.5 border-l border-black/[0.08] dark:border-white/[0.1] pl-1.5">
+                      {folderThreads.map((thread) => {
+                        const selected = selectedThreadId === thread.id;
+                        const isRenaming = renamingThreadId === thread.id;
 
-                          return (
-                            <li key={thread.id}>
-                              {isRenaming ? (
-                                <form
-                                  onSubmit={(e) => {
-                                    e.preventDefault();
-                                    handleCommitRename(thread);
+                        return (
+                          <li key={thread.id}>
+                            {isRenaming ? (
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  handleCommitRename(thread);
+                                }}
+                                className="flex items-center gap-1 rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-1.5 py-1"
+                              >
+                                <label htmlFor={renameInputId} className="sr-only">
+                                  Rename thread
+                                </label>
+                                <input
+                                  id={renameInputId}
+                                  ref={renameInputRef}
+                                  type="text"
+                                  value={renameDraft}
+                                  onChange={(e) => setRenameDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Escape") {
+                                      e.stopPropagation();
+                                      setRenamingThreadId(null);
+                                    }
                                   }}
-                                  className="flex items-center gap-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.06] px-1.5 py-1"
+                                  onBlur={() => handleCommitRename(thread)}
+                                  className="w-full min-w-0 rounded border border-black/20 dark:border-white/20 bg-white dark:bg-zinc-900 px-1.5 py-0.5 text-xs"
+                                />
+                              </form>
+                            ) : (
+                              <div
+                                className={`group/thread relative flex items-center gap-0.5 rounded-md pl-2 pr-1 py-1 transition-colors ${
+                                  selected
+                                    ? "bg-black/[0.07] dark:bg-white/[0.1] font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2.5px] before:rounded-full before:bg-black/80 dark:before:bg-white/85"
+                                    : " opacity-75 hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:opacity-100"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  title={thread.title}
+                                  onClick={() => {
+                                    acpStore.selectFolder(folder.id);
+                                    selectThread(thread.id);
+                                    if (nav.path !== undefined) {
+                                      nav.navigate(undefined);
+                                    }
+                                  }}
+                                  className="flex min-h-[24px] flex-1 min-w-0 items-center text-left text-[12.5px] leading-snug"
                                 >
-                                  <label htmlFor={renameInputId} className="sr-only">
-                                    Rename thread
-                                  </label>
-                                  <input
-                                    id={renameInputId}
-                                    ref={renameInputRef}
-                                    type="text"
-                                    value={renameDraft}
-                                    onChange={(e) => setRenameDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Escape") {
-                                        e.stopPropagation();
-                                        setRenamingThreadId(null);
-                                      }
-                                    }}
-                                    onBlur={() => handleCommitRename(thread)}
-                                    className="w-full min-w-0 rounded border border-black/20 dark:border-white/20 bg-white dark:bg-zinc-900 px-1.5 py-0.5 text-xs"
-                                  />
-                                </form>
-                              ) : (
-                                <div
-                                  className={`group/thread flex items-center gap-1 rounded-lg px-1.5 py-1 transition-colors ${
-                                    selected
-                                      ? "openui-agent-thread-button--selected font-medium"
-                                      : "hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
-                                  }`}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      acpStore.selectFolder(folder.id);
-                                      selectThread(thread.id);
-                                      if (nav.path !== undefined) {
-                                        nav.navigate(undefined);
-                                      }
-                                    }}
-                                    className="flex min-h-[24px] flex-1 min-w-0 items-center gap-1.5 text-left text-xs"
-                                  >
-                                    <MessageCircle
-                                      className="h-3.5 w-3.5 shrink-0 opacity-65"
-                                      aria-hidden="true"
-                                    />
-                                    <span className="truncate">{thread.title}</span>
-                                  </button>
+                                  <span className="truncate">{thread.title}</span>
+                                </button>
 
+                                <div className="flex shrink-0 items-center opacity-0 group-hover/thread:opacity-100 group-focus-within/thread:opacity-100 transition-opacity">
                                   <button
                                     type="button"
                                     aria-label={`Rename thread ${thread.title}`}
+                                    title="Rename"
                                     onClick={() => {
                                       setRenamingThreadId(thread.id);
                                       setRenameDraft(thread.title);
                                     }}
-                                    className="inline-flex min-h-[24px] min-w-[24px] shrink-0 items-center justify-center rounded-md opacity-0 group-hover/thread:opacity-70 group-focus-within/thread:opacity-70 focus-visible:opacity-100 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100"
+                                    className="inline-flex h-5 w-5 items-center justify-center rounded opacity-70 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100"
                                   >
                                     <Pencil className="h-3 w-3" aria-hidden="true" />
                                   </button>
@@ -286,17 +304,18 @@ export function FolderSidebar() {
                                   <button
                                     type="button"
                                     aria-label={`Remove thread ${thread.title} from sidebar`}
+                                    title="Remove from sidebar"
                                     onClick={() => handleRemoveThreadFromSidebar(thread.id)}
-                                    className="inline-flex min-h-[24px] min-w-[24px] shrink-0 items-center justify-center rounded-md opacity-0 group-hover/thread:opacity-70 group-focus-within/thread:opacity-70 focus-visible:opacity-100 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100"
+                                    className="inline-flex h-5 w-5 items-center justify-center rounded opacity-70 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100"
                                   >
                                     <X className="h-3 w-3" aria-hidden="true" />
                                   </button>
                                 </div>
-                              )}
-                            </li>
-                          );
-                        })
-                      )}
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </li>
