@@ -192,7 +192,7 @@ export function AntigravityUserMessage({ message }: { message: UserMessage }) {
 
         {displayText && (
           <div className="openui-shell-thread-message-user__content">
-            <div>{displayText}</div>
+            <div className="whitespace-pre-wrap break-words">{displayText}</div>
           </div>
         )}
       </div>
