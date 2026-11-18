@@ -53,6 +53,7 @@ function makeState(
     autoTitledThreadIds: [],
     manuallyRenamedThreadIds: [],
     attachments: [],
+    queuedMessages: {},
     activeModal: null,
     lastError: null,
     ...overrides,
@@ -242,5 +243,17 @@ describe("acpStore hydration and folder lifecycle", () => {
     expect(selectEffectiveOpenUI(acpStore.getState(), "thread-md")).toBe(false);
     expect(selectEffectiveOpenUI(acpStore.getState(), null)).toBe(true);
     expect(selectEffectiveOpenUI(acpStore.getState(), "thread-other")).toBe(true);
+
+    // Per-thread mid-turn message queue (FIFO enqueue/dequeue/remove/clear)
+    const q1 = acpStore.enqueueMessage("thread-q", { text: "first", attachments: [] });
+    const q2 = acpStore.enqueueMessage("thread-q", { text: "second", attachments: [] });
+    expect(acpStore.getState().queuedMessages["thread-q"]).toHaveLength(2);
+    acpStore.removeQueuedMessage("thread-q", q1.id);
+    expect(acpStore.getState().queuedMessages["thread-q"]).toHaveLength(1);
+    expect(acpStore.dequeueMessage("thread-q")?.id).toBe(q2.id);
+    expect(acpStore.getState().queuedMessages["thread-q"]).toBeUndefined();
+    acpStore.enqueueMessage("thread-q", { text: "to-clear", attachments: [] });
+    expect(acpStore.clearQueuedMessages("thread-q")).toHaveLength(1);
+    expect(acpStore.getState().queuedMessages["thread-q"]).toBeUndefined();
   });
 });

@@ -19,9 +19,11 @@ import type { WorkspaceFileEntry } from "@/lib/acp/workspace";
 import {
   acpStore,
   getActivePendingPermissions,
+  getBootstrapThreadKey,
   getMergedSlashCommands,
   selectEffectiveSnapshot,
   useAcpStore,
+  type ComposerAttachment,
 } from "@/lib/client/acp-store";
 import { useThread, useThreadList } from "@openuidev/react-headless";
 import {
@@ -91,9 +93,14 @@ export function AntigravityComposer({
   const switchToNewThread = useThreadList((s) => s.switchToNewThread);
 
   const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
+  const activeFolderId = useAcpStore((s) => s.activeFolderId);
+  const effectiveThreadId = selectedThreadId || getBootstrapThreadKey(activeFolderId);
   const cwd = useAcpStore((s) => s.cwd);
   const additionalDirectories = useAcpStore((s) => s.additionalDirectories);
   const attachments = useAcpStore((s) => s.attachments);
+  const activeModal = useAcpStore((s) => s.activeModal);
+  const queuedMessages = useAcpStore((s) => s.queuedMessages[effectiveThreadId]);
+  const queued = useMemo(() => queuedMessages ?? [], [queuedMessages]);
 
   const commands = useMemo(() => getMergedSlashCommands(snapshot), [snapshot]);
   const pendingPermissions = useMemo(
@@ -260,7 +267,37 @@ export function AntigravityComposer({
     [autocomplete, textContent, setTextContent],
   );
 
+  const dispatchUserMessage = useCallback(
+    (text: string, msgAttachments: ComposerAttachment[]) => {
+      const messageAttachments: UserMessageAttachmentMeta[] = msgAttachments.map((att) => ({
+        id: att.id,
+        name: att.name,
+        mimeType: att.mimeType,
+        size: att.size,
+        kind: att.kind,
+        ...(att.kind === "image" && att.data ? { data: att.data } : {}),
+      }));
+      if (msgAttachments.length > 0) {
+        acpStore.setAttachments(msgAttachments);
+      }
+      void processMessage({
+        role: "user",
+        content: text || "Analyze the attached file(s).",
+        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+      } as Parameters<typeof processMessage>[0]);
+    },
+    [processMessage],
+  );
+
   const handleCancel = useCallback(() => {
+    const cleared = acpStore.clearQueuedMessages(effectiveThreadId);
+    if (cleared.length > 0 && !textContent.trim() && attachments.length === 0) {
+      const first = cleared[0]!;
+      setTextContent(first.text);
+      if (first.attachments.length > 0) {
+        acpStore.setAttachments(first.attachments);
+      }
+    }
     if (selectedThreadId) {
       void fetch("/api/acp/session", {
         method: "POST",
@@ -269,29 +306,29 @@ export function AntigravityComposer({
       }).catch(() => {});
     }
     cancelMessage();
-  }, [selectedThreadId, cancelMessage]);
+  }, [effectiveThreadId, selectedThreadId, textContent, attachments.length, cancelMessage]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = textContent.trim();
-    if ((!trimmed && attachments.length === 0) || isRunning || isLoadingMessages) {
+    if ((!trimmed && attachments.length === 0) || isLoadingMessages) {
+      return;
+    }
+    if (isRunning) {
+      acpStore.enqueueMessage(effectiveThreadId, {
+        text: trimmed,
+        attachments: [...attachments],
+      });
+      setTextContent("");
+      setDismissedAtText(null);
+      if (attachments.length > 0) {
+        acpStore.setAttachments([]);
+      }
       return;
     }
     if (executeLocalAppCommand(trimmed)) {
       return;
     }
-    const messageAttachments: UserMessageAttachmentMeta[] = attachments.map((att) => ({
-      id: att.id,
-      name: att.name,
-      mimeType: att.mimeType,
-      size: att.size,
-      kind: att.kind,
-      ...(att.kind === "image" && att.data ? { data: att.data } : {}),
-    }));
-    void processMessage({
-      role: "user",
-      content: trimmed || "Analyze the attached file(s).",
-      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-    } as Parameters<typeof processMessage>[0]);
+    dispatchUserMessage(trimmed, attachments);
     setTextContent("");
     setDismissedAtText(null);
   }, [
@@ -299,10 +336,35 @@ export function AntigravityComposer({
     attachments,
     isRunning,
     isLoadingMessages,
+    effectiveThreadId,
     executeLocalAppCommand,
-    processMessage,
+    dispatchUserMessage,
     setTextContent,
   ]);
+
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    const wasRunning = wasRunningRef.current;
+    wasRunningRef.current = isRunning;
+    if (wasRunning && !isRunning && !isLoadingMessages) {
+      const next = acpStore.dequeueMessage(effectiveThreadId);
+      if (next) {
+        dispatchUserMessage(next.text, next.attachments);
+      }
+    }
+  }, [isRunning, isLoadingMessages, effectiveThreadId, dispatchUserMessage]);
+
+  useEffect(() => {
+    if (!isRunning || activeModal !== null) return;
+    const onWindowKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, [isRunning, activeModal, handleCancel]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (activeItems.length > 0) {
@@ -673,6 +735,40 @@ export function AntigravityComposer({
           }
         }}
       >
+        {queued.length > 0 && (
+          <div className="mx-3 mt-2 flex flex-col gap-1">
+            {queued.map((item, idx) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-2 rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.03] dark:bg-white/[0.04] px-2.5 py-1 text-xs"
+              >
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="shrink-0 rounded bg-black/10 dark:bg-white/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide opacity-75">
+                    {idx === 0 ? "Queued" : `Queued #${idx + 1}`}
+                  </span>
+                  <span className="truncate opacity-85">
+                    {item.text || `${item.attachments.length} attachment(s)`}
+                  </span>
+                  {item.text && item.attachments.length > 0 && (
+                    <span className="shrink-0 text-[10px] opacity-60">
+                      +{item.attachments.length} file{item.attachments.length > 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  aria-label="Remove queued message"
+                  title="Remove queued message"
+                  onClick={() => acpStore.removeQueuedMessage(effectiveThreadId, item.id)}
+                  className="shrink-0 opacity-60 hover:opacity-100 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {attachmentError && (
           <div className="mx-3 mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-300">
             <span>{attachmentError}</span>
@@ -788,10 +884,23 @@ export function AntigravityComposer({
             <div className="flex shrink-0 items-center gap-1.5">
               <ComposerContextUsageBadge />
 
+              {isRunning && (textContent.trim() || attachments.length > 0) && (
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  aria-label="Queue message"
+                  title="Queue message for after current turn (Enter)"
+                  className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black"
+                >
+                  <ArrowUp className="h-4 w-4" aria-hidden="true" />
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={isRunning ? handleCancel : handleSubmit}
-                aria-label={isRunning ? "Cancel generation" : "Send message"}
+                aria-label={isRunning ? "Cancel generation (Esc)" : "Send message"}
+                title={isRunning ? "Cancel generation (Esc)" : "Send message (Enter)"}
                 className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black disabled:opacity-40"
                 disabled={!isRunning && !textContent.trim() && attachments.length === 0}
               >

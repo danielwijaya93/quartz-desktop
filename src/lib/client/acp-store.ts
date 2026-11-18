@@ -32,6 +32,12 @@ export interface ComposerAttachment {
 
 export type ImageAttachment = ComposerAttachment;
 
+export interface QueuedComposerMessage {
+  id: string;
+  text: string;
+  attachments: ComposerAttachment[];
+}
+
 export type ActiveModalKind = null | "mcp" | "add-folder" | "sessions";
 
 export const APP_SLASH_COMMANDS: AcpCommand[] = [
@@ -97,6 +103,7 @@ export interface AcpClientState {
   autoTitledThreadIds: string[];
   manuallyRenamedThreadIds: string[];
   attachments: ComposerAttachment[];
+  queuedMessages: Record<string, QueuedComposerMessage[]>;
   activeModal: ActiveModalKind;
   lastError: string | null;
 }
@@ -272,6 +279,7 @@ const INITIAL_STATE: AcpClientState = {
   autoTitledThreadIds: [],
   manuallyRenamedThreadIds: [],
   attachments: [],
+  queuedMessages: {},
   activeModal: null,
   lastError: null,
 };
@@ -809,6 +817,74 @@ export const acpStore = {
   addAttachment(att: ComposerAttachment): void {
     state = { ...state, attachments: [...state.attachments, att] };
     emit();
+  },
+
+  setAttachments(attachments: ComposerAttachment[]): void {
+    state = { ...state, attachments };
+    emit();
+  },
+
+  enqueueMessage(
+    threadId: string,
+    msg: Omit<QueuedComposerMessage, "id">,
+  ): QueuedComposerMessage {
+    const entry: QueuedComposerMessage = {
+      id:
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      text: msg.text,
+      attachments: msg.attachments,
+    };
+    const existing = state.queuedMessages[threadId] ?? [];
+    state = {
+      ...state,
+      queuedMessages: {
+        ...state.queuedMessages,
+        [threadId]: [...existing, entry],
+      },
+    };
+    emit();
+    return entry;
+  },
+
+  dequeueMessage(threadId: string): QueuedComposerMessage | undefined {
+    const existing = state.queuedMessages[threadId];
+    if (!existing || existing.length === 0) return undefined;
+    const [head, ...rest] = existing;
+    const nextQueued = { ...state.queuedMessages };
+    if (rest.length > 0) {
+      nextQueued[threadId] = rest;
+    } else {
+      delete nextQueued[threadId];
+    }
+    state = { ...state, queuedMessages: nextQueued };
+    emit();
+    return head;
+  },
+
+  removeQueuedMessage(threadId: string, id: string): void {
+    const existing = state.queuedMessages[threadId];
+    if (!existing || existing.length === 0) return;
+    const rest = existing.filter((item) => item.id !== id);
+    const nextQueued = { ...state.queuedMessages };
+    if (rest.length > 0) {
+      nextQueued[threadId] = rest;
+    } else {
+      delete nextQueued[threadId];
+    }
+    state = { ...state, queuedMessages: nextQueued };
+    emit();
+  },
+
+  clearQueuedMessages(threadId: string): QueuedComposerMessage[] {
+    const existing = state.queuedMessages[threadId] ?? [];
+    if (existing.length === 0) return [];
+    const nextQueued = { ...state.queuedMessages };
+    delete nextQueued[threadId];
+    state = { ...state, queuedMessages: nextQueued };
+    emit();
+    return existing;
   },
 
   removeAttachment(id: string): void {
