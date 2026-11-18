@@ -18,6 +18,18 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+function formatShortAge(createdAt: string | number | undefined): string {
+  const ts = typeof createdAt === "number" ? createdAt : createdAt ? Date.parse(createdAt) : 0;
+  if (!ts || !Number.isFinite(ts)) return "";
+  const diffMin = Math.max(0, Math.floor((Date.now() - ts) / 60_000));
+  if (diffMin < 60) return `${Math.max(1, diffMin)}m`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d`;
+  return `${Math.floor(diffDay / 30)}mo`;
+}
+
 export function FolderSidebar() {
   const threads = useThreadList((s) => s.threads);
   const isLoadingThreads = useThreadList((s) => s.isLoadingThreads);
@@ -32,6 +44,7 @@ export function FolderSidebar() {
   const activeFolderId = useAcpStore((s) => s.activeFolderId);
   const threadFolderMap = useAcpStore((s) => s.threadFolderMap);
   const hiddenThreadIds = useAcpStore((s) => s.hiddenThreadIds);
+  const threadAgents = useAcpStore((s) => s.threadAgents);
   const hydrated = useAcpStore((s) => s.hydrated);
 
   const [hasRequestedThreads, setHasRequestedThreads] = useState(false);
@@ -167,7 +180,7 @@ export function FolderSidebar() {
                   <div
                     className={`group flex items-center gap-0.5 rounded-md px-1 py-0.5 transition-colors ${
                       isActive && !hasSelectedThreadInside
-                        ? "bg-black/[0.04] dark:bg-white/[0.05]"
+                        ? "bg-black/[0.06] dark:bg-white/[0.08] ring-1 ring-black/[0.08] dark:ring-white/[0.1]"
                         : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                     }`}
                   >
@@ -230,13 +243,28 @@ export function FolderSidebar() {
                   </div>
 
                   {isExpanded && folderThreads.length > 0 && (
-                    <ul className="ml-3 space-y-0.5 border-l border-black/[0.08] dark:border-white/[0.1] pl-1.5">
-                      {folderThreads.map((thread) => {
+                    <ul className="ml-3 space-y-0">
+                      {folderThreads.map((thread, idx) => {
                         const selected = selectedThreadId === thread.id;
                         const isRenaming = renamingThreadId === thread.id;
+                        const isLast = idx === folderThreads.length - 1;
+                        const ageLabel = formatShortAge(thread.createdAt);
+                        const isQuartz = threadAgents[thread.id] === "quartz";
 
                         return (
-                          <li key={thread.id}>
+                          <li key={thread.id} className="relative pl-4">
+                            {/* File-tree L / ├ branch connector */}
+                            {!isLast && (
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute left-0 top-0 bottom-0 w-px bg-black/15 dark:bg-white/15"
+                              />
+                            )}
+                            <span
+                              aria-hidden="true"
+                              className="pointer-events-none absolute left-0 top-0 h-[15px] w-3 rounded-bl-[4px] border-b border-l border-black/15 dark:border-white/15"
+                            />
+
                             {isRenaming ? (
                               <form
                                 onSubmit={(e) => {
@@ -266,10 +294,10 @@ export function FolderSidebar() {
                               </form>
                             ) : (
                               <div
-                                className={`group/thread relative flex items-center gap-0.5 rounded-md pl-2 pr-1 py-1 transition-colors ${
+                                className={`group/thread relative flex items-center gap-1 rounded-md pl-1.5 pr-1 py-0.5 transition-colors ${
                                   selected
                                     ? "bg-black/[0.07] dark:bg-white/[0.1] font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2.5px] before:rounded-full before:bg-black/80 dark:before:bg-white/85"
-                                    : " opacity-75 hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:opacity-100"
+                                    : "opacity-80 hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:opacity-100"
                                 }`}
                               >
                                 <button
@@ -287,7 +315,18 @@ export function FolderSidebar() {
                                   <span className="truncate">{thread.title}</span>
                                 </button>
 
-                                <div className="flex shrink-0 items-center opacity-0 group-hover/thread:opacity-100 group-focus-within/thread:opacity-100 transition-opacity">
+                                {(isQuartz || ageLabel) && (
+                                  <span className="flex shrink-0 items-center gap-1 text-[10px] tabular-nums opacity-45 group-hover/thread:hidden group-focus-within/thread:hidden">
+                                    {isQuartz && (
+                                      <span className="rounded bg-black/[0.06] dark:bg-white/[0.1] px-1 py-px font-mono text-[9px] uppercase">
+                                        q
+                                      </span>
+                                    )}
+                                    {ageLabel}
+                                  </span>
+                                )}
+
+                                <div className="hidden shrink-0 items-center group-hover/thread:flex group-focus-within/thread:flex">
                                   <button
                                     type="button"
                                     aria-label={`Rename thread ${thread.title}`}

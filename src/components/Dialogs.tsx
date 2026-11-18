@@ -696,12 +696,17 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
     const hiddenSet = new Set(hiddenThreadIds);
     setHiddenLocalThreads(listStoredThreads().filter((t) => hiddenSet.has(t.id)));
 
+    const normalizedCwd = cwd ? cwd.replace(/\/+$/, "") : "";
     const qs = new URLSearchParams({ action: "list", ...(cwd ? { cwd } : {}) });
     fetch(`/api/acp/session?${qs.toString()}`)
       .then((r) => r.json())
       .then((data: { sessions?: HistoricalAcpSession[]; error?: string }) => {
         if (data.error) setError(data.error);
-        setSessions(data.sessions ?? []);
+        const raw = data.sessions ?? [];
+        const scoped = normalizedCwd
+          ? raw.filter((s) => s.cwd.replace(/\/+$/, "") === normalizedCwd)
+          : raw;
+        setSessions(scoped);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load sessions"))
       .finally(() => setLoading(false));
@@ -756,8 +761,12 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
   };
 
   return (
-    <ModalDialog open={open} title="Antigravity CLI & ACP Sessions" onClose={onClose}>
+    <ModalDialog open={open} title="Import Session" onClose={onClose}>
       <div className="space-y-4 text-sm">
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-3 py-2 text-xs">
+          <span className="opacity-70">Workspace:</span>
+          <span className="truncate font-mono font-medium">{cwd || "Current workspace"}</span>
+        </div>
         {hiddenLocalThreads.length > 0 && (
           <div className="space-y-2">
             <h3 className="text-xs font-semibold opacity-75">

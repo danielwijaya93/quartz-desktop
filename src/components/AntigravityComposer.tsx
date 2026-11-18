@@ -35,6 +35,7 @@ import {
   FileCode2,
   FileSpreadsheet,
   FileText,
+  History,
   Image as ImageIcon,
   Paperclip,
   Slash,
@@ -808,6 +809,17 @@ export function AntigravityComposer({
               </button>
 
               <ComposerConfigControls />
+
+              <button
+                type="button"
+                aria-label="Import session from current workspace"
+                title={cwd ? `Import session from ${cwd}` : "Import session from current workspace"}
+                onClick={() => acpStore.setActiveModal("sessions")}
+                className="inline-flex min-h-[28px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2 py-1 text-xs font-medium opacity-75 hover:opacity-100 cursor-pointer"
+              >
+                <History className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span>Import</span>
+              </button>
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
