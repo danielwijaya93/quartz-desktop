@@ -92,6 +92,7 @@ export interface AcpClientState {
   acpSessionIds: Record<string, string>;
   appDataDirs: Record<string, AcpAppDataDir>;
   threadAgents: Record<string, AcpAgentId>;
+  threadOpenUI: Record<string, boolean>;
   pendingAutoTitleIds: string[];
   autoTitledThreadIds: string[];
   manuallyRenamedThreadIds: string[];
@@ -266,6 +267,7 @@ const INITIAL_STATE: AcpClientState = {
   acpSessionIds: {},
   appDataDirs: {},
   threadAgents: {},
+  threadOpenUI: {},
   pendingAutoTitleIds: [],
   autoTitledThreadIds: [],
   manuallyRenamedThreadIds: [],
@@ -542,6 +544,35 @@ export const acpStore = {
     persistPrefs();
     scheduleWorkspaceSync();
     emit();
+  },
+
+  setThreadOpenUI(threadId: string, enabled: boolean): void {
+    state = {
+      ...state,
+      threadOpenUI: { ...state.threadOpenUI, [threadId]: enabled },
+    };
+    emit();
+  },
+
+  promoteBootstrapOpenUI(threadId: string): boolean {
+    if (!threadId) return selectEffectiveOpenUI(state, threadId);
+    const effective = selectEffectiveOpenUI(state, threadId);
+    const folderBootstrap = getBootstrapThreadKey(state.activeFolderId);
+    const hasBootstrap =
+      typeof state.threadOpenUI[folderBootstrap] === "boolean" ||
+      typeof state.threadOpenUI.bootstrap === "boolean";
+    if (typeof state.threadOpenUI[threadId] === "boolean" && !hasBootstrap) {
+      return effective;
+    }
+    const nextThreadOpenUI = { ...state.threadOpenUI, [threadId]: effective };
+    delete nextThreadOpenUI[folderBootstrap];
+    delete nextThreadOpenUI.bootstrap;
+    state = {
+      ...state,
+      threadOpenUI: nextThreadOpenUI,
+    };
+    emit();
+    return effective;
   },
 
   addFolder(input: { cwd: string; name?: string }): WorkspaceFolder {
@@ -846,6 +877,24 @@ export function selectEffectiveAgent(
     state.snapshots[folderBootstrap]?.agent ??
     state.preferredAgent
   );
+}
+
+/** Resolves whether OpenUI generative UI rendering is enabled for the given thread or bootstrap context. */
+export function selectEffectiveOpenUI(
+  state: AcpClientState,
+  selectedThreadId: string | null | undefined,
+): boolean {
+  if (selectedThreadId && typeof state.threadOpenUI[selectedThreadId] === "boolean") {
+    return state.threadOpenUI[selectedThreadId]!;
+  }
+  const folderBootstrap = getBootstrapThreadKey(state.activeFolderId);
+  if (typeof state.threadOpenUI[folderBootstrap] === "boolean") {
+    return state.threadOpenUI[folderBootstrap]!;
+  }
+  if (typeof state.threadOpenUI.bootstrap === "boolean") {
+    return state.threadOpenUI.bootstrap;
+  }
+  return true;
 }
 
 export function partitionThreadsByFolder<T extends { id: string }>(params: {

@@ -5,6 +5,7 @@ import {
   getMergedSlashCommands,
   partitionThreadsByFolder,
   selectEffectiveAgent,
+  selectEffectiveOpenUI,
   selectEffectiveSnapshot,
   type AcpClientState,
 } from "@/lib/client/acp-store";
@@ -47,6 +48,7 @@ function makeState(
     acpSessionIds: {},
     appDataDirs: {},
     threadAgents: {},
+    threadOpenUI: {},
     pendingAutoTitleIds: [],
     autoTitledThreadIds: [],
     manuallyRenamedThreadIds: [],
@@ -230,5 +232,15 @@ describe("acpStore hydration and folder lifecycle", () => {
     acpStore.setPreferences({ preferredAgent: "agy" });
     expect(selectEffectiveAgent(acpStore.getState(), "thread-q")).toBe("quartz");
     expect(selectEffectiveAgent(acpStore.getState(), "thread-new")).toBe("agy");
+
+    // Per-thread OpenUI toggle defaults to true and resets bootstrap on promote
+    expect(selectEffectiveOpenUI(acpStore.getState(), "thread-new")).toBe(true);
+    const bootstrapKey = getBootstrapThreadKey(acpStore.getState().activeFolderId);
+    acpStore.setThreadOpenUI(bootstrapKey, false);
+    expect(selectEffectiveOpenUI(acpStore.getState(), null)).toBe(false);
+    expect(acpStore.promoteBootstrapOpenUI("thread-md")).toBe(false);
+    expect(selectEffectiveOpenUI(acpStore.getState(), "thread-md")).toBe(false);
+    expect(selectEffectiveOpenUI(acpStore.getState(), null)).toBe(true);
+    expect(selectEffectiveOpenUI(acpStore.getState(), "thread-other")).toBe(true);
   });
 });

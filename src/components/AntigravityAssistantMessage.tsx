@@ -156,9 +156,9 @@ export function AntigravityAssistantMessage({
             onStateUpdate={handleStateUpdate}
             initialState={initialState}
           />
-        ) : !isStreaming ? (
+        ) : (
           <MarkDownRenderer textMarkdown={cleanedContent} variant="card" />
-        ) : null}
+        )}
       </div>
     </div>
   );

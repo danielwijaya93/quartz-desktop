@@ -60,6 +60,7 @@ export interface AcpSessionEntry {
   threadId: string;
   sessionId: string;
   agent: AcpAgentId;
+  openuiEnabled: boolean;
   appDataDir: AcpAppDataDir;
   child: ChildProcessWithoutNullStreams;
   connection: acp.ClientConnection;
@@ -92,6 +93,7 @@ export interface AcpSessionEntry {
 export interface GetOrCreateSessionOptions {
   threadId: string;
   agent?: AcpAgentId;
+  openuiEnabled?: boolean;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
   cwd?: string;
@@ -177,6 +179,24 @@ function evictOldestIfFull(): void {
     if (entry) disposeEntry(entry);
     SESSIONS.delete(oldestId);
   }
+}
+
+function buildSessionMeta(
+  agent: AcpAgentId,
+  openuiEnabled: boolean,
+): Record<string, unknown> | undefined {
+  if (!openuiEnabled) return undefined;
+  const systemPromptAppend = getOpenUISystemPrompt();
+  if (agent === "quartz") {
+    return {
+      systemPrompt: { append: systemPromptAppend },
+    };
+  }
+  return {
+    antigravity: {
+      systemPrompt: { append: systemPromptAppend },
+    },
+  };
 }
 
 function mapMcpServersToAcp(servers: AcpSessionMcpServer[]): acp.McpServer[] {
@@ -577,7 +597,8 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
       clientInfo: { name: "antigravity-gen-ui", version: "0.1.0" },
     });
 
-    const systemPromptAppend = getOpenUISystemPrompt();
+    const openuiEnabled = options.openuiEnabled ?? true;
+    const sessionMeta = buildSessionMeta(agent, openuiEnabled);
     const acpMcpServers = mapMcpServersToAcp(mcpServers);
     const replayUpdates: acp.SessionUpdate[] = [];
 
@@ -585,6 +606,7 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
       threadId: options.threadId,
       sessionId: "",
       agent,
+      openuiEnabled,
       appDataDir,
       child,
       connection,
@@ -606,19 +628,13 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
         ? {
             cwd,
             mcpServers: [],
-            _meta: {
-              systemPrompt: { append: systemPromptAppend },
-            },
+            ...(sessionMeta ? { _meta: sessionMeta } : {}),
           }
         : {
             cwd,
             additionalDirectories,
             mcpServers: acpMcpServers,
-            _meta: {
-              antigravity: {
-                systemPrompt: { append: systemPromptAppend },
-              },
-            },
+            ...(sessionMeta ? { _meta: sessionMeta } : {}),
           };
 
     let sessionResp: acp.NewSessionResponse | acp.LoadSessionResponse | acp.ResumeSessionResponse;
@@ -630,20 +646,14 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
                 sessionId: options.acpSessionId,
                 cwd,
                 mcpServers: [],
-                _meta: {
-                  systemPrompt: { append: systemPromptAppend },
-                },
+                ...(sessionMeta ? { _meta: sessionMeta } : {}),
               }
             : {
                 sessionId: options.acpSessionId,
                 cwd,
                 additionalDirectories,
                 mcpServers: acpMcpServers,
-                _meta: {
-                  antigravity: {
-                    systemPrompt: { append: systemPromptAppend },
-                  },
-                },
+                ...(sessionMeta ? { _meta: sessionMeta } : {}),
               };
         sessionResp = await connection.agent.request(
           acp.AGENT_METHODS.session_load,
@@ -695,6 +705,7 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
       threadId: options.threadId,
       sessionId: "",
       agent,
+      openuiEnabled: options.openuiEnabled ?? true,
       appDataDir,
       child,
       connection,
@@ -718,11 +729,17 @@ export async function getOrCreateAcpSession(
   const now = Date.now();
   evictIdle(now);
 
+  const requestedOpenUI = options.openuiEnabled ?? true;
   const existing = SESSIONS.get(options.threadId);
   if (existing && !existing.child.killed) {
     if (options.agent && existing.agent !== options.agent) {
       disposeEntry(existing);
       SESSIONS.delete(options.threadId);
+    } else if (existing.openuiEnabled !== requestedOpenUI && !existing.isStreaming) {
+      const resumeSessionId = options.acpSessionId ?? (existing.sessionId || undefined);
+      disposeEntry(existing);
+      SESSIONS.delete(options.threadId);
+      options = { ...options, acpSessionId: resumeSessionId };
     } else {
       existing.lastUsed = now;
       return existing;
@@ -946,6 +963,7 @@ async function attemptLoadHistoricalSession(params: {
       threadId: params.threadId,
       sessionId: params.acpSessionId,
       agent: "agy",
+      openuiEnabled: true,
       appDataDir: params.appDataDir,
       child,
       connection,
@@ -1005,6 +1023,7 @@ async function attemptLoadHistoricalSession(params: {
       threadId: params.threadId,
       sessionId: params.acpSessionId,
       agent: "agy",
+      openuiEnabled: true,
       appDataDir: params.appDataDir,
       child,
       connection,

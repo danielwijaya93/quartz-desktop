@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     action?: string;
     threadId?: string;
     agent?: AcpAgentId;
+    openuiEnabled?: boolean;
     acpSessionId?: string;
     appDataDir?: AcpAppDataDir;
     cwd?: string;
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest) {
         const entry = await getOrCreateAcpSession({
           threadId,
           agent: body.agent,
+          openuiEnabled: body.openuiEnabled,
           acpSessionId: body.acpSessionId,
           appDataDir: body.appDataDir,
           cwd: body.cwd,

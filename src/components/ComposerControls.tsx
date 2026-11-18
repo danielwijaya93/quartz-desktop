@@ -14,13 +14,15 @@ import {
   type AcpConfigKey,
 } from "@/lib/client/acp-session-controls";
 import {
+  acpStore,
   getBootstrapThreadKey,
   selectEffectiveAgent,
+  selectEffectiveOpenUI,
   selectEffectiveSnapshot,
   useAcpStore,
 } from "@/lib/client/acp-store";
 import { useThreadList } from "@openuidev/react-headless";
-import { Bot, Check, ChevronDown, Shield } from "lucide-react";
+import { Bot, Check, ChevronDown, Shield, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 interface ToggleEventLike extends Event {
@@ -38,6 +40,7 @@ export function ComposerConfigControls() {
 
   const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
   const activeAgent = useAcpStore((s) => selectEffectiveAgent(s, selectedThreadId));
+  const openuiEnabled = useAcpStore((s) => selectEffectiveOpenUI(s, selectedThreadId));
   const hydrated = useAcpStore((s) => s.hydrated);
   const preferredModel = useAcpStore((s) => s.preferredModel);
   const preferredThoughtLevel = useAcpStore((s) => s.preferredThoughtLevel);
@@ -139,6 +142,30 @@ export function ComposerConfigControls() {
           </option>
         </select>
       </label>
+
+      <button
+        type="button"
+        aria-pressed={openuiEnabled}
+        aria-label={
+          openuiEnabled
+            ? "OpenUI generative UI enabled; click for plain Markdown"
+            : "Plain Markdown mode; click to enable OpenUI generative UI"
+        }
+        title={
+          openuiEnabled
+            ? "OpenUI components enabled (click for plain Markdown)"
+            : "Plain Markdown mode (click to enable OpenUI)"
+        }
+        onClick={() => acpStore.setThreadOpenUI(effectiveThreadId, !openuiEnabled)}
+        className={`inline-flex min-h-[28px] items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors cursor-pointer ${
+          openuiEnabled
+            ? "border-black/20 dark:border-white/25 bg-black/[0.06] dark:bg-white/[0.1] opacity-95 hover:opacity-100"
+            : "border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] opacity-55 hover:opacity-85"
+        }`}
+      >
+        <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
+        <span>OpenUI</span>
+      </button>
 
       {activeAgent === "agy" && (
         <>

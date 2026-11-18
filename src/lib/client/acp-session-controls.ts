@@ -1,7 +1,7 @@
 "use client";
 
 import type { AcpAgentId, AcpConfigOption, AcpSessionSnapshot, AcpUsageInfo } from "@/lib/acp/types";
-import { acpStore, selectEffectiveAgent } from "@/lib/client/acp-store";
+import { acpStore, selectEffectiveAgent, selectEffectiveOpenUI } from "@/lib/client/acp-store";
 import { useEffect } from "react";
 
 export const FALLBACK_MODELS = [
@@ -92,6 +92,7 @@ export function useAcpSessionBootstrap(effectiveThreadId: string, hydrated: bool
         action: "init",
         threadId: effectiveThreadId,
         agent: selectEffectiveAgent(state, effectiveThreadId),
+        openuiEnabled: selectEffectiveOpenUI(state, effectiveThreadId),
         acpSessionId: state.acpSessionIds[effectiveThreadId],
         appDataDir: state.appDataDirs[effectiveThreadId],
         cwd: state.cwd || undefined,

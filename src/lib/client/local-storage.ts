@@ -389,9 +389,11 @@ export function createAntigravityChatBindings(): {
           const threadId = typeof parsed.threadId === "string" ? parsed.threadId : "";
           activeThreadId = threadId;
           requestThreadId = threadId;
+          const openuiEnabled = acpStore.promoteBootstrapOpenUI(threadId);
           mergedBody = JSON.stringify({
             ...parsed,
             agent: selectEffectiveAgent(state, threadId),
+            openuiEnabled,
             acpSessionId: state.acpSessionIds[threadId],
             appDataDir: state.appDataDirs[threadId],
             cwd: state.cwd || undefined,

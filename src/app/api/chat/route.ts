@@ -47,6 +47,7 @@ interface ChatRequestBody {
   runId?: string;
   messages?: IncomingMessage[];
   agent?: AcpAgentId;
+  openuiEnabled?: boolean;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
   cwd?: string;
@@ -215,6 +216,7 @@ export async function POST(req: NextRequest) {
     sessionEntry = await getOrCreateAcpSession({
       threadId,
       agent: body.agent,
+      openuiEnabled: body.openuiEnabled,
       acpSessionId: body.acpSessionId,
       appDataDir: body.appDataDir,
       cwd,
@@ -229,6 +231,7 @@ export async function POST(req: NextRequest) {
       sessionEntry = await getOrCreateAcpSession({
         threadId,
         agent: body.agent,
+        openuiEnabled: body.openuiEnabled,
         cwd,
         additionalDirectories: body.additionalDirectories,
         mcpServers: body.mcpServers,
