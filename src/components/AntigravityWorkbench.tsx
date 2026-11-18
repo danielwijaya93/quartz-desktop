@@ -15,7 +15,7 @@ import { createAntigravityChatBindings } from "@/lib/client/local-storage";
 import { useThread } from "@openuidev/react-headless";
 import { AgentInterface, useThemeModePreference } from "@openuidev/react-ui";
 import { openuiLibrary } from "@openuidev/react-ui/genui-lib";
-import { BarChart3, GitBranch, ListChecks, Sparkles } from "lucide-react";
+import { BarChart3, GitBranch, History, ListChecks, Sparkles } from "lucide-react";
 import { useEffect, useMemo } from "react";
 
 const STARTERS = [
@@ -79,6 +79,21 @@ function WelcomeHero() {
   );
 }
 
+function ImportSessionButton({ className = "" }: { className?: string }) {
+  return (
+    <button
+      type="button"
+      aria-label="Import session from current workspace"
+      title="Import session from current workspace"
+      onClick={() => acpStore.setActiveModal("sessions")}
+      className={`inline-flex min-h-[28px] items-center gap-1.5 rounded-lg border border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 px-2.5 py-1 text-xs font-medium opacity-75 backdrop-blur-xs transition-opacity hover:opacity-100 cursor-pointer ${className}`}
+    >
+      <History className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span>Import</span>
+    </button>
+  );
+}
+
 export function AntigravityWorkbench() {
   const { mode, setPreference } = useThemeModePreference();
   const { llm, storage } = useMemo(() => createAntigravityChatBindings(), []);
@@ -93,7 +108,9 @@ export function AntigravityWorkbench() {
   }, [mode]);
 
   return (
-    <div className="h-dvh w-screen overflow-hidden">
+    <div className="relative h-dvh w-screen overflow-hidden">
+      <ImportSessionButton className="antigravity-desktop-import fixed right-4 top-3 z-20" />
+
       <AgentInterface
         llm={llm}
         storage={storage}
@@ -119,8 +136,7 @@ export function AntigravityWorkbench() {
           </AgentInterface.SidebarContent>
 
           <AgentInterface.SidebarFooter>
-            <div className="flex w-full items-center justify-between border-t border-black/[0.06] dark:border-white/[0.08] px-1.5 pt-2">
-              <span className="text-[11px] font-medium opacity-45">Antigravity</span>
+            <div className="flex w-full items-center justify-end border-t border-black/[0.06] dark:border-white/[0.08] px-1 pt-2">
               <AgentInterface.ThemeModeToggle mode={mode} onModeChange={setPreference} />
             </div>
           </AgentInterface.SidebarFooter>
@@ -130,6 +146,11 @@ export function AntigravityWorkbench() {
           className="!hidden"
           showChatTitle={false}
           showChatActions={false}
+        />
+
+        <AgentInterface.MobileHeader
+          newChatButton={false}
+          actions={<ImportSessionButton />}
         />
 
         <AgentInterface.Welcome>

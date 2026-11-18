@@ -125,7 +125,7 @@ export function ComposerConfigControls() {
 
   return (
     <>
-      <label className="inline-flex min-h-[28px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2 py-1 text-xs opacity-85 hover:opacity-100">
+      <label className="inline-flex min-h-[28px] items-center gap-1 rounded-lg px-2 py-1 text-xs opacity-75 transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:opacity-100">
         <Bot className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
         <select
           aria-label="Coding agent"
@@ -157,10 +157,10 @@ export function ComposerConfigControls() {
             : "Plain Markdown mode (click to enable OpenUI)"
         }
         onClick={() => acpStore.setThreadOpenUI(effectiveThreadId, !openuiEnabled)}
-        className={`inline-flex min-h-[28px] items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors cursor-pointer ${
+        className={`inline-flex min-h-[28px] items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition-colors cursor-pointer ${
           openuiEnabled
-            ? "border-black/20 dark:border-white/25 bg-black/[0.06] dark:bg-white/[0.1] opacity-95 hover:opacity-100"
-            : "border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] opacity-55 hover:opacity-85"
+            ? "bg-black/[0.06] dark:bg-white/[0.1] opacity-95 hover:opacity-100"
+            : "opacity-50 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:opacity-85"
         }`}
       >
         <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -177,7 +177,7 @@ export function ComposerConfigControls() {
         aria-controls={panelId}
         aria-label={`Model: ${activeModelName}, Thinking effort: ${activeThoughtName}`}
         disabled={updatingConfig === "model" || updatingConfig === "thought_level"}
-        className="inline-flex min-h-[28px] max-w-[230px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2 py-1 text-xs font-medium opacity-85 hover:opacity-100 cursor-pointer disabled:opacity-50"
+        className="inline-flex min-h-[28px] max-w-[230px] items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium opacity-75 transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:opacity-100 cursor-pointer disabled:opacity-50"
       >
         <span className="truncate">{activeModelName}</span>
         <span className="opacity-50" aria-hidden="true">
@@ -263,7 +263,7 @@ export function ComposerConfigControls() {
         </div>
       </div>
 
-      <label className="inline-flex min-h-[28px] items-center gap-1 rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] px-2 py-1 text-xs opacity-85 hover:opacity-100">
+      <label className="inline-flex min-h-[28px] items-center gap-1 rounded-lg px-2 py-1 text-xs opacity-75 transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:opacity-100">
         <Shield className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
         <select
           aria-label="Permission mode"
@@ -295,7 +295,7 @@ export function ComposerContextUsageBadge() {
     <span
       title={contextUsage.title}
       aria-label={contextUsage.title}
-      className="inline-flex min-h-[28px] items-center rounded-lg border border-black/10 dark:border-white/10 px-2 py-1 text-[11px] font-medium tabular-nums opacity-70"
+      className="inline-flex min-h-[28px] items-center px-1.5 py-1 text-[11px] font-medium tabular-nums opacity-50"
     >
       {contextUsage.label}
     </span>

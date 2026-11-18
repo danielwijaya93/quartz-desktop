@@ -31,6 +31,10 @@ dialog::backdrop {
   z-index: 10;
 }
 
+div:has(> .openui-agent-container--mobile) .antigravity-desktop-import {
+  display: none;
+}
+
 .openui-agent-thread-container:not(:has(.openui-agent-welcome-screen))
   .openui-agent-thread-scroll-area {
   padding-top: var(--openui-space-l);
