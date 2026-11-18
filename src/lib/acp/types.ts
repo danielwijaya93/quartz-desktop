@@ -91,12 +91,6 @@ export interface AcpSessionMcpServer {
   headers?: Array<{ name: string; value: string }>;
 }
 
-export interface WorkspaceConfig {
-  cwd: string;
-  additionalDirectories: string[];
-  mcpServers: AcpSessionMcpServer[];
-}
-
 export type AcpAppDataDir = "antigravity-cli" | "antigravity";
 
 export type AcpAgentId = "agy" | "quartz";

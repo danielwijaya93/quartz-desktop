@@ -8,7 +8,13 @@ import type {
   HistoricalAcpSession,
   ReplayedTranscriptMessage,
 } from "@/lib/acp/types";
-import { acpStore, useAcpStore } from "@/lib/client/acp-store";
+import {
+  acpStore,
+  getBootstrapThreadKey,
+  selectEffectiveAgent,
+  selectEffectiveOpenUI,
+  useAcpStore,
+} from "@/lib/client/acp-store";
 import { importReplayedSessionToStorage, listStoredThreads } from "@/lib/client/local-storage";
 import { useThreadList, type Thread } from "@openuidev/react-headless";
 import { FolderPlus, Plus, Power, RotateCcw, Trash2, X } from "lucide-react";
@@ -187,17 +193,20 @@ function McpManagerDialog({ open, onClose }: { open: boolean; onClose: () => voi
       ];
       acpStore.setPreferences({ sessionMcpServers: nextList });
 
-      const threadKey = selectedThreadId || "bootstrap";
+      const currentState = acpStore.getState();
+      const threadKey = selectedThreadId || getBootstrapThreadKey(currentState.activeFolderId);
       await fetch("/api/acp/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "updateWorkspace",
           threadId: threadKey,
-          cwd: acpStore.getState().cwd || undefined,
-          additionalDirectories: acpStore.getState().additionalDirectories,
+          agent: selectEffectiveAgent(currentState, selectedThreadId),
+          openuiEnabled: selectEffectiveOpenUI(currentState, selectedThreadId),
+          cwd: currentState.cwd || undefined,
+          additionalDirectories: currentState.additionalDirectories,
           mcpServers: nextList,
-          mode: acpStore.getState().preferredMode || "auto",
+          mode: currentState.preferredMode || "auto",
         }),
       });
       setName("");

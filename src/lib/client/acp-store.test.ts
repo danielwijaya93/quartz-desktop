@@ -156,18 +156,21 @@ describe("acpStore hydration and folder lifecycle", () => {
     expect(acpStore.getState().hydrated).toBe(false);
     expect(acpStore.getState().cwd).toBe("");
 
+    const stored = new Map<string, string>([
+      [
+        "agy-openui:workspace-prefs",
+        JSON.stringify({
+          cwd: "/home/danielwijaya",
+          preferredMode: "plan",
+        }),
+      ],
+    ]);
     vi.stubGlobal("window", {});
     vi.stubGlobal("localStorage", {
-      getItem: (key: string) => {
-        if (key === "agy-openui:workspace-prefs") {
-          return JSON.stringify({
-            cwd: "/home/danielwijaya",
-            preferredMode: "plan",
-          });
-        }
-        return null;
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, val: string) => {
+        stored.set(key, val);
       },
-      setItem: () => {},
     });
 
     acpStore.hydrateFromStorage();
@@ -243,6 +246,10 @@ describe("acpStore hydration and folder lifecycle", () => {
     expect(selectEffectiveOpenUI(acpStore.getState(), "thread-md")).toBe(false);
     expect(selectEffectiveOpenUI(acpStore.getState(), null)).toBe(true);
     expect(selectEffectiveOpenUI(acpStore.getState(), "thread-other")).toBe(true);
+    const savedPrefs = JSON.parse(stored.get("agy-openui:workspace-prefs") ?? "{}") as {
+      threadOpenUI?: Record<string, boolean>;
+    };
+    expect(savedPrefs.threadOpenUI?.["thread-md"]).toBe(false);
 
     // Per-thread mid-turn message queue (FIFO enqueue/dequeue/remove/clear)
     const q1 = acpStore.enqueueMessage("thread-q", { text: "first", attachments: [] });

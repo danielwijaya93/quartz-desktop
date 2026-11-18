@@ -9,7 +9,9 @@ import { agUIAdapter, EventType, type StreamProtocolAdapter } from "@openuidev/r
  * (slash commands, model/mode config, token usage, plan progress, permissions)
  * while standard AG-UI events flow unmodified into OpenUI's chat store.
  */
-export function createAcpStreamAdapter(getThreadId: () => string): StreamProtocolAdapter {
+export function createAcpStreamAdapter(
+  getThreadId: (response: Response) => string,
+): StreamProtocolAdapter {
   const inner = agUIAdapter();
   return {
     async *parse(response: Response) {
@@ -17,7 +19,7 @@ export function createAcpStreamAdapter(getThreadId: () => string): StreamProtoco
         if (event.type === EventType.CUSTOM && "name" in event && event.name === "acp") {
           const payload = (event as { value?: AcpCustomEventPayload }).value;
           if (payload) {
-            acpStore.applyCustomEvent(getThreadId(), payload);
+            acpStore.applyCustomEvent(getThreadId(response), payload);
           }
           continue;
         }

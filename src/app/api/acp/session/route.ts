@@ -98,6 +98,7 @@ export async function POST(req: NextRequest) {
         const entry = await resetAcpSession({
           threadId,
           agent: body.agent,
+          openuiEnabled: body.openuiEnabled,
           cwd: body.cwd,
           additionalDirectories: body.additionalDirectories,
           mcpServers: body.mcpServers,

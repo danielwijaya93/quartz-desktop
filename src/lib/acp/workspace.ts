@@ -155,6 +155,7 @@ export async function executeWorkspaceShell(
     const child = spawn("/bin/bash", ["-lc", command], {
       cwd: resolvedCwd,
       env: process.env,
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -173,13 +174,31 @@ export async function executeWorkspaceShell(
     child.stdout.on("data", append);
     child.stderr.on("data", append);
 
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      const pid = child.pid;
+      if (pid) {
+        try {
+          process.kill(-pid, "SIGTERM");
+        } catch {
+          child.kill("SIGTERM");
+        }
+        killTimer = setTimeout(() => {
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {
+            // already exited
+          }
+        }, 1000);
+      } else {
+        child.kill("SIGTERM");
+      }
     }, timeoutMs);
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
       const output = chunks.join("") + (timedOut ? `\n[Timed out after ${timeoutMs}ms]` : "");
       resolvePromise({
         output,
@@ -190,6 +209,7 @@ export async function executeWorkspaceShell(
 
     child.on("error", (err) => {
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
       resolvePromise({
         output: err.message,
         exitCode: 1,

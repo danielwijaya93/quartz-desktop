@@ -160,6 +160,7 @@ export async function switchAcpSessionAgent(
       action: "switchAgent",
       threadId: effectiveThreadId,
       agent,
+      openuiEnabled: selectEffectiveOpenUI(state, effectiveThreadId),
       cwd: state.cwd || undefined,
       additionalDirectories: [],
       mcpServers: state.sessionMcpServers,

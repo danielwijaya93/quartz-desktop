@@ -11,10 +11,10 @@ import {
 } from "@/lib/acp/run-buffer";
 import {
   buildSessionSnapshot,
-  extractAcpToolOutput,
   getExistingAcpSession,
   getOrCreateAcpSession,
 } from "@/lib/acp/session-manager";
+import { createAcpStreamTranslator } from "@/lib/acp/sse-translator";
 import type { AcpAgentId, AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
 import { executeWorkspaceShell, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import {
@@ -228,17 +228,28 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     if (body.acpSessionId) {
-      sessionEntry = await getOrCreateAcpSession({
-        threadId,
-        agent: body.agent,
-        openuiEnabled: body.openuiEnabled,
-        cwd,
-        additionalDirectories: body.additionalDirectories,
-        mcpServers: body.mcpServers,
-        mode: body.mode ?? "auto",
-        model: body.model,
-        thoughtLevel: body.thoughtLevel,
-      });
+      try {
+        sessionEntry = await getOrCreateAcpSession({
+          threadId,
+          agent: body.agent,
+          openuiEnabled: body.openuiEnabled,
+          cwd,
+          additionalDirectories: body.additionalDirectories,
+          mcpServers: body.mcpServers,
+          mode: body.mode ?? "auto",
+          model: body.model,
+          thoughtLevel: body.thoughtLevel,
+        });
+      } catch (fallbackErr) {
+        const message =
+          fallbackErr instanceof Error
+            ? fallbackErr.message
+            : "Failed to start Antigravity ACP session.";
+        return new Response(JSON.stringify({ error: message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
     } else {
       const message = err instanceof Error ? err.message : "Failed to start Antigravity ACP session.";
       return new Response(JSON.stringify({ error: message }), {
@@ -301,283 +312,119 @@ export async function POST(req: NextRequest) {
     value: { type: "session_snapshot", snapshot: buildSessionSnapshot(sessionEntry) },
   });
 
-  let currentTextId: string | null = null;
-  let hasAssistantText = false;
-  let thinkingId: string | null = null;
-      let thinkingStarted = false;
-      let thinkingText = "";
-      let activeParentMsgId: string | undefined;
-      const toolState = new Map<
-        string,
-        { started: boolean; ended: boolean; resultSent: boolean; name: string; lastArgs: string }
-      >();
+  const translator = createAcpStreamTranslator(emit);
 
-      const closeThinking = () => {
-        if (!thinkingId || !thinkingStarted) return;
-        emit({ type: EventType.TOOL_CALL_END, toolCallId: thinkingId });
+  sessionEntry.isStreaming = true;
+  sessionEntry.lastUsed = Date.now();
+
+  sessionEntry.activeCustomListener = (payload) => {
+    emit({ type: EventType.CUSTOM, name: "acp", value: payload });
+  };
+  sessionEntry.activeUpdateListener = translator.onUpdate;
+
+  const buildPromptBlocks = (extraBlocks: acp.ContentBlock[]): acp.ContentBlock[] => {
+    const blocks: acp.ContentBlock[] = [];
+    if (trimmedText) {
+      blocks.push({ type: "text", text: trimmedText });
+    }
+    for (const img of messageImages) {
+      blocks.push({
+        type: "image",
+        mimeType: img.mimeType,
+        data: img.data,
+      });
+    }
+    blocks.push(...extraBlocks);
+    return blocks;
+  };
+
+  const { blocks: attachmentBlocks, hasBinaryBlobs } =
+    buildPromptBlocksFromAttachments(fileAttachments);
+  const promptBlocks = buildPromptBlocks(attachmentBlocks);
+
+  void (async () => {
+    let tempAttachmentDir: string | null = null;
+    try {
+      let resp;
+      try {
+        resp = await sessionEntry.connection.agent.request(
+          acp.AGENT_METHODS.session_prompt,
+          {
+            sessionId: sessionEntry.sessionId,
+            prompt: promptBlocks,
+          },
+        );
+      } catch (promptErr) {
+        if (!hasBinaryBlobs || req.signal.aborted) {
+          throw promptErr;
+        }
+        // Fallback for binary files (e.g. PDFs) if agent rejects inline BlobResourceContents
+        const fallback = await buildFallbackBlocksWithTempFiles(fileAttachments);
+        tempAttachmentDir = fallback.tempDir;
+        resp = await sessionEntry.connection.agent.request(
+          acp.AGENT_METHODS.session_prompt,
+          {
+            sessionId: sessionEntry.sessionId,
+            prompt: buildPromptBlocks(fallback.blocks),
+          },
+        );
+      }
+
+      translator.flush();
+
+      if (!translator.hasAssistantText()) {
+        // Silent slash commands like /compact produce no message chunks: synthesize an OpenUI status card
+        const cmdLabel = trimmedText.startsWith("/") ? trimmedText.split(/\s+/)[0]! : "Command";
+        const statusCard = buildStatusCardOpenUILang(
+          `${cmdLabel} completed (${resp.stopReason})`,
+          "Session state has been updated.",
+          "success",
+          sessionEntry.usage
+            ? [
+                {
+                  label: "Context Usage",
+                  subtitle: "Updated window",
+                  value: sessionEntry.usage.used.toLocaleString(),
+                  subtext: `/ ${sessionEntry.usage.size.toLocaleString()} tokens`,
+                  icon: "cpu",
+                },
+              ]
+            : undefined,
+        );
+        const fallbackMsgId = crypto.randomUUID();
         emit({
-          type: EventType.TOOL_CALL_RESULT,
-          messageId: crypto.randomUUID(),
-          toolCallId: thinkingId,
-          content: thinkingText || "Reasoning completed.",
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: fallbackMsgId,
+          role: "assistant",
         });
-        thinkingId = null;
-        thinkingStarted = false;
-        thinkingText = "";
-      };
+        emit({
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: fallbackMsgId,
+          delta: statusCard,
+        });
+        emit({ type: EventType.TEXT_MESSAGE_END, messageId: fallbackMsgId });
+      }
 
-      const closeTextMessage = () => {
-        if (!currentTextId) return;
-        emit({ type: EventType.TEXT_MESSAGE_END, messageId: currentTextId });
-        currentTextId = null;
-      };
-
-      sessionEntry.isStreaming = true;
+      emit({
+        type: EventType.CUSTOM,
+        name: "acp",
+        value: { type: "session_snapshot", snapshot: buildSessionSnapshot(sessionEntry) },
+      });
+    } catch (err) {
+      translator.flush();
+      const msg = err instanceof Error ? err.message : String(err);
+      emit({ type: EventType.RUN_ERROR, message: msg });
+    } finally {
+      if (tempAttachmentDir) {
+        void fs.rm(tempAttachmentDir, { recursive: true, force: true }).catch(() => {});
+      }
+      sessionEntry.isStreaming = false;
       sessionEntry.lastUsed = Date.now();
-
-      sessionEntry.activeCustomListener = (payload) => {
-        emit({ type: EventType.CUSTOM, name: "acp", value: payload });
-      };
-
-      sessionEntry.activeUpdateListener = (update) => {
-        if (update.sessionUpdate === "agent_thought_chunk") {
-          const delta = update.content.type === "text" ? update.content.text : "";
-          if (!delta) return;
-          closeTextMessage();
-          if (!thinkingId) {
-            thinkingId = `thinking-${crypto.randomUUID()}`;
-            thinkingStarted = true;
-            emit({
-              type: EventType.TOOL_CALL_START,
-              toolCallId: thinkingId,
-              toolCallName: "Thinking",
-              ...(activeParentMsgId ? { parentMessageId: activeParentMsgId } : {}),
-            });
-          }
-          thinkingText += delta;
-          emit({
-            type: EventType.TOOL_CALL_ARGS,
-            toolCallId: thinkingId,
-            delta,
-          });
-          return;
-        }
-
-        if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
-          closeThinking();
-          closeTextMessage();
-
-          const id = update.toolCallId;
-          const tcName =
-            typeof (update as { name?: unknown }).name === "string"
-              ? (update as { name: string }).name
-              : update.title || "tool";
-          let st = toolState.get(id);
-          if (!st) {
-            st = { started: false, ended: false, resultSent: false, name: tcName, lastArgs: "" };
-            toolState.set(id, st);
-          }
-
-          if (!st.started) {
-            st.started = true;
-            emit({
-              type: EventType.TOOL_CALL_START,
-              toolCallId: id,
-              toolCallName: st.name,
-              ...(activeParentMsgId ? { parentMessageId: activeParentMsgId } : {}),
-            });
-          }
-
-          if (update.rawInput !== undefined) {
-            const nextArgs =
-              typeof update.rawInput === "string"
-                ? update.rawInput
-                : JSON.stringify(update.rawInput ?? {});
-            if (nextArgs && nextArgs !== "{}" && !st.lastArgs) {
-              st.lastArgs = nextArgs;
-              emit({
-                type: EventType.TOOL_CALL_ARGS,
-                toolCallId: id,
-                delta: nextArgs,
-              });
-            } else if (nextArgs.startsWith(st.lastArgs) && nextArgs.length > st.lastArgs.length) {
-              const delta = nextArgs.slice(st.lastArgs.length);
-              st.lastArgs = nextArgs;
-              emit({ type: EventType.TOOL_CALL_ARGS, toolCallId: id, delta });
-            }
-          }
-
-          if (update.status === "completed" || update.status === "failed") {
-            if (!st.ended) {
-              st.ended = true;
-              emit({ type: EventType.TOOL_CALL_END, toolCallId: id });
-            }
-            if (!st.resultSent) {
-              st.resultSent = true;
-              const outputText = extractAcpToolOutput(update);
-              emit({
-                type: EventType.TOOL_CALL_RESULT,
-                messageId: crypto.randomUUID(),
-                toolCallId: id,
-                content: outputText,
-                ...(update.status === "failed" ? { isError: true, error: outputText } : {}),
-              });
-            }
-          }
-          return;
-        }
-
-        if (update.sessionUpdate === "agent_message_chunk") {
-          const delta = update.content.type === "text" ? update.content.text : "";
-          if (!delta) return;
-          closeThinking();
-          if (!currentTextId) {
-            currentTextId = crypto.randomUUID();
-            activeParentMsgId = currentTextId;
-            emit({
-              type: EventType.TEXT_MESSAGE_START,
-              messageId: currentTextId,
-              role: "assistant",
-            });
-          }
-          hasAssistantText = true;
-          emit({
-            type: EventType.TEXT_MESSAGE_CONTENT,
-            messageId: currentTextId,
-            delta,
-          });
-        }
-      };
-
-      const { blocks: attachmentBlocks, hasBinaryBlobs } =
-        buildPromptBlocksFromAttachments(fileAttachments);
-      const promptBlocks: acp.ContentBlock[] = [];
-      if (trimmedText) {
-        promptBlocks.push({ type: "text", text: trimmedText });
-      }
-      for (const img of messageImages) {
-        promptBlocks.push({
-          type: "image",
-          mimeType: img.mimeType,
-          data: img.data,
-        });
-      }
-      promptBlocks.push(...attachmentBlocks);
-
-      void (async () => {
-        let tempAttachmentDir: string | null = null;
-        try {
-          let resp;
-          try {
-            resp = await sessionEntry.connection.agent.request(
-              acp.AGENT_METHODS.session_prompt,
-              {
-                sessionId: sessionEntry.sessionId,
-                prompt: promptBlocks,
-              },
-            );
-          } catch (promptErr) {
-            if (!hasBinaryBlobs || req.signal.aborted) {
-              throw promptErr;
-            }
-            // Fallback for binary files (e.g. PDFs) if agent rejects inline BlobResourceContents
-            const fallback = await buildFallbackBlocksWithTempFiles(fileAttachments);
-            tempAttachmentDir = fallback.tempDir;
-            const fallbackPrompt: acp.ContentBlock[] = [];
-            if (trimmedText) {
-              fallbackPrompt.push({ type: "text", text: trimmedText });
-            }
-            for (const img of messageImages) {
-              fallbackPrompt.push({
-                type: "image",
-                mimeType: img.mimeType,
-                data: img.data,
-              });
-            }
-            fallbackPrompt.push(...fallback.blocks);
-            resp = await sessionEntry.connection.agent.request(
-              acp.AGENT_METHODS.session_prompt,
-              {
-                sessionId: sessionEntry.sessionId,
-                prompt: fallbackPrompt,
-              },
-            );
-          }
-
-          closeThinking();
-          // Ensure any pending interactive tools (e.g. ask_question) cleanly close at end_turn
-          for (const [id, st] of toolState) {
-            if (st.started && !st.ended) {
-              st.ended = true;
-              emit({ type: EventType.TOOL_CALL_END, toolCallId: id });
-            }
-            if (!st.resultSent) {
-              st.resultSent = true;
-              emit({
-                type: EventType.TOOL_CALL_RESULT,
-                messageId: crypto.randomUUID(),
-                toolCallId: id,
-                content: st.lastArgs || "Awaiting user response.",
-              });
-            }
-          }
-
-          if (!hasAssistantText) {
-            // Silent slash commands like /compact produce no message chunks: synthesize an OpenUI status card
-            const cmdLabel = trimmedText.startsWith("/") ? trimmedText.split(/\s+/)[0]! : "Command";
-            const statusCard = buildStatusCardOpenUILang(
-              `${cmdLabel} completed (${resp.stopReason})`,
-              "Session state has been updated.",
-              "success",
-              sessionEntry.usage
-                ? [
-                    {
-                      label: "Context Usage",
-                      subtitle: "Updated window",
-                      value: sessionEntry.usage.used.toLocaleString(),
-                      subtext: `/ ${sessionEntry.usage.size.toLocaleString()} tokens`,
-                      icon: "cpu",
-                    },
-                  ]
-                : undefined,
-            );
-            const fallbackMsgId = crypto.randomUUID();
-            emit({
-              type: EventType.TEXT_MESSAGE_START,
-              messageId: fallbackMsgId,
-              role: "assistant",
-            });
-            emit({
-              type: EventType.TEXT_MESSAGE_CONTENT,
-              messageId: fallbackMsgId,
-              delta: statusCard,
-            });
-            emit({ type: EventType.TEXT_MESSAGE_END, messageId: fallbackMsgId });
-          } else {
-            closeTextMessage();
-          }
-
-          emit({
-            type: EventType.CUSTOM,
-            name: "acp",
-            value: { type: "session_snapshot", snapshot: buildSessionSnapshot(sessionEntry) },
-          });
-        } catch (err) {
-          closeThinking();
-          closeTextMessage();
-          const msg = err instanceof Error ? err.message : String(err);
-          emit({ type: EventType.RUN_ERROR, message: msg });
-        } finally {
-          if (tempAttachmentDir) {
-            void fs.rm(tempAttachmentDir, { recursive: true, force: true }).catch(() => {});
-          }
-          sessionEntry.isStreaming = false;
-          sessionEntry.lastUsed = Date.now();
-          sessionEntry.activeUpdateListener = undefined;
-          sessionEntry.activeCustomListener = undefined;
-          finish();
-        }
-      })();
+      sessionEntry.activeUpdateListener = undefined;
+      sessionEntry.activeCustomListener = undefined;
+      finish();
+    }
+  })();
 
   return new Response(createRunSseStream(run, req.signal), {
     headers: SSE_HEADERS,

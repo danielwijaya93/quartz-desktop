@@ -30,8 +30,6 @@ export interface ComposerAttachment {
   text?: string;
 }
 
-export type ImageAttachment = ComposerAttachment;
-
 export interface QueuedComposerMessage {
   id: string;
   text: string;
@@ -178,6 +176,17 @@ function sanitizeAgentRecord(raw: unknown): Record<string, AcpAgentId> {
   return out;
 }
 
+function sanitizeBooleanRecord(raw: unknown): Record<string, boolean> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof k === "string" && k && typeof v === "boolean") {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 function sanitizeStringArray(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return Array.from(
@@ -245,6 +254,7 @@ function loadInitialPrefs(): Partial<AcpClientState> {
       acpSessionIds,
       appDataDirs: sanitizeAppDataDirRecord(parsed.appDataDirs),
       threadAgents: sanitizeAgentRecord(parsed.threadAgents),
+      threadOpenUI: sanitizeBooleanRecord(parsed.threadOpenUI),
       pendingAutoTitleIds: sanitizeStringArray(parsed.pendingAutoTitleIds),
       autoTitledThreadIds: sanitizeStringArray(parsed.autoTitledThreadIds),
       manuallyRenamedThreadIds: sanitizeStringArray(parsed.manuallyRenamedThreadIds),
@@ -335,6 +345,7 @@ function persistPrefs(): void {
         preferredAgent: state.preferredAgent,
         appDataDirs: state.appDataDirs,
         threadAgents: state.threadAgents,
+        threadOpenUI: state.threadOpenUI,
         pendingAutoTitleIds: state.pendingAutoTitleIds,
         autoTitledThreadIds: state.autoTitledThreadIds,
         manuallyRenamedThreadIds: state.manuallyRenamedThreadIds,
@@ -559,6 +570,7 @@ export const acpStore = {
       ...state,
       threadOpenUI: { ...state.threadOpenUI, [threadId]: enabled },
     };
+    persistPrefs();
     emit();
   },
 
@@ -579,6 +591,7 @@ export const acpStore = {
       ...state,
       threadOpenUI: nextThreadOpenUI,
     };
+    persistPrefs();
     emit();
     return effective;
   },
