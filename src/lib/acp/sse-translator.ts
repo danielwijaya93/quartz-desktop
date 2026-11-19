@@ -5,6 +5,7 @@ import { EventType } from "@openuidev/react-headless";
 export interface AcpStreamTranslator {
   onUpdate: (update: acp.SessionUpdate) => void;
   flush: () => void;
+  closeCurrentTextMessage: () => void;
   hasAssistantText: () => boolean;
   hasPendingBackgroundTask: () => boolean;
   clearPendingBackgroundTask: () => void;
@@ -19,6 +20,7 @@ export function createAcpStreamTranslator(
   emit: (event: Record<string, unknown>) => void,
 ): AcpStreamTranslator {
   let currentTextId: string | null = null;
+  let currentTextBuffer = "";
   let assistantTextEmitted = false;
   let pendingBackgroundTask = false;
   let thinkingId: string | null = null;
@@ -48,6 +50,7 @@ export function createAcpStreamTranslator(
     if (!currentTextId) return;
     emit({ type: EventType.TEXT_MESSAGE_END, messageId: currentTextId });
     currentTextId = null;
+    currentTextBuffer = "";
   };
 
   const onUpdate = (update: acp.SessionUpdate) => {
@@ -145,8 +148,16 @@ export function createAcpStreamTranslator(
       const delta = update.content.type === "text" ? update.content.text : "";
       if (!delta) return;
       closeThinking();
+      if (
+        currentTextId &&
+        /(?:^|\n)root\s*=/.test(currentTextBuffer) &&
+        /(?:^|\n)root\s*=/.test(delta)
+      ) {
+        closeTextMessage();
+      }
       if (!currentTextId) {
         currentTextId = crypto.randomUUID();
+        currentTextBuffer = "";
         activeParentMsgId = currentTextId;
         emit({
           type: EventType.TEXT_MESSAGE_START,
@@ -154,6 +165,7 @@ export function createAcpStreamTranslator(
           role: "assistant",
         });
       }
+      currentTextBuffer += delta;
       assistantTextEmitted = true;
       emit({
         type: EventType.TEXT_MESSAGE_CONTENT,
@@ -186,6 +198,7 @@ export function createAcpStreamTranslator(
   return {
     onUpdate,
     flush,
+    closeCurrentTextMessage: closeTextMessage,
     hasAssistantText: () => assistantTextEmitted,
     hasPendingBackgroundTask: () => pendingBackgroundTask,
     clearPendingBackgroundTask: () => {

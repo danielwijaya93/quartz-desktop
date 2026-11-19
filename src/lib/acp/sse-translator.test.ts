@@ -96,6 +96,29 @@ describe("createAcpStreamTranslator", () => {
     translator.clearPendingBackgroundTask();
     expect(translator.hasPendingBackgroundTask()).toBe(false);
   });
+
+  it("splits consecutive OpenUI root blocks into separate assistant messages", () => {
+    const events: Array<Record<string, unknown>> = [];
+    const translator = createAcpStreamTranslator((ev) => events.push(ev));
+
+    translator.onUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "root = Stack([a])\na = TextContent(\"first\")" },
+    } as acp.SessionUpdate);
+
+    translator.onUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "\nroot = Stack([b])\nb = TextContent(\"second\")" },
+    } as acp.SessionUpdate);
+
+    translator.flush();
+
+    const starts = events.filter((e) => e.type === EventType.TEXT_MESSAGE_START);
+    const ends = events.filter((e) => e.type === EventType.TEXT_MESSAGE_END);
+    expect(starts).toHaveLength(2);
+    expect(ends).toHaveLength(2);
+    expect(starts[0]?.messageId).not.toBe(starts[1]?.messageId);
+  });
 });
 
 describe("convertReplayedUpdatesToMessages", () => {

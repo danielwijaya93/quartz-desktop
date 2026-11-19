@@ -401,7 +401,8 @@ export async function POST(req: NextRequest) {
             }, delayMs);
           };
 
-          // Clear the initial turn's flag so we wait for the background task wakeup
+          // Clear the initial turn's flag and close its text message so wakeup output starts cleanly
+          translator.closeCurrentTextMessage();
           translator.clearPendingBackgroundTask();
           maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
           sessionEntry.onCancelTurn = finishWait;
@@ -428,8 +429,11 @@ export async function POST(req: NextRequest) {
 
           sessionEntry.activeCustomListener = (payload) => {
             emit({ type: EventType.CUSTOM, name: "acp", value: payload });
-            if (payload.type === "usage" && !translator.hasPendingBackgroundTask() && !translator.hasOpenTools()) {
-              armSettle(400);
+            if (payload.type === "usage") {
+              translator.closeCurrentTextMessage();
+              if (!translator.hasPendingBackgroundTask() && !translator.hasOpenTools()) {
+                armSettle(400);
+              }
             }
           };
         });
