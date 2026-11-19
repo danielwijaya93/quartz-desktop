@@ -20,6 +20,14 @@ dialog::backdrop {
   visibility: hidden;
 }
 
+.openui-agent-sidebar-container--collapsed .antigravity-sidebar-footer-bar {
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .openui-agent-thread-header {
   display: none;
 }
@@ -29,6 +37,35 @@ dialog::backdrop {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+/* Keep mobile drawer New Chat button proportional and in-flow (not floating over footer) */
+.openui-agent-container--mobile .openui-agent-sidebar-primary-actions {
+  padding: 12px 16px 0;
+}
+
+.openui-agent-container--mobile .openui-agent-new-chat-floating-button.openui-button-base {
+  position: static;
+  left: auto;
+  bottom: auto;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  justify-content: flex-start;
+  gap: 8px;
+  background-color: var(--openui-sunk);
+  color: var(--openui-text-neutral-primary);
+  border: 1px solid var(--openui-border-default);
+}
+
+.openui-agent-container--mobile .openui-agent-new-chat-floating-button.openui-button-base:not(:disabled):hover,
+.openui-agent-container--mobile .openui-agent-new-chat-floating-button.openui-button-base:not(:disabled):active {
+  background-color: var(--openui-sunk-deep);
+  opacity: 1;
 }
 
 .antigravity-no-scrollbar {
@@ -48,7 +85,7 @@ dialog::backdrop {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 10px;
   overflow: visible;
 }
 
@@ -57,17 +94,18 @@ dialog::backdrop {
   flex: 0 0 auto;
   width: 100%;
   resize: none;
-  min-height: 32px;
+  min-height: 40px;
   max-height: min(200px, 35dvh);
+  padding-top: 8px;
   overscroll-behavior: contain;
 }
 
-.antigravity-model-popover[popover] {
+.antigravity-composer-popover[popover] {
   overscroll-behavior: contain;
 }
 
 @supports (position-area: block-start) {
-  .antigravity-model-popover[popover] {
+  .antigravity-composer-popover[popover] {
     inset: auto;
     margin: 0 0 8px 0;
     position-area: block-start span-inline-end;
@@ -76,65 +114,11 @@ dialog::backdrop {
 }
 
 @supports not (position-area: block-start) {
-  .antigravity-model-popover[popover] {
+  .antigravity-composer-popover[popover] {
     position: fixed;
     inset: auto;
     margin: 0;
     left: var(--ag-popover-left, 16px);
     bottom: var(--ag-popover-bottom, 72px);
-  }
-}
-
-@supports (appearance: base-select) {
-  .antigravity-mode-select,
-  .antigravity-mode-select::picker(select) {
-    appearance: base-select;
-  }
-
-  .antigravity-mode-select {
-    align-items: center;
-    padding-right: 0;
-  }
-
-  .antigravity-mode-select::picker-icon {
-    display: none;
-  }
-
-  .antigravity-mode-select::picker(select) {
-    margin: 6px 0;
-    padding: 4px;
-    border-radius: 12px;
-    border: 1px solid rgb(0 0 0 / 0.14);
-    background-color: #ffffff;
-    color: #18181b;
-    box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
-    font-size: 12px;
-  }
-
-  [data-openui-theme="dark"] .antigravity-mode-select::picker(select) {
-    border-color: rgb(255 255 255 / 0.15);
-    background-color: #18181b;
-    color: #f4f4f5;
-    box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
-  }
-
-  .antigravity-mode-select option {
-    padding: 6px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    gap: 8px;
-  }
-
-  .antigravity-mode-select option:hover {
-    background-color: rgb(0 0 0 / 0.06);
-  }
-
-  [data-openui-theme="dark"] .antigravity-mode-select option:hover {
-    background-color: rgb(255 255 255 / 0.1);
-  }
-
-  .antigravity-mode-select option::checkmark {
-    opacity: 0.8;
-    font-size: 11px;
   }
 }

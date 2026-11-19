@@ -786,7 +786,7 @@ export function AntigravityComposer({
           />
 
           <div className="openui-agent-thread-composer__action-bar flex items-center justify-between gap-2">
-            <div className="antigravity-no-scrollbar flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto text-xs">
+            <div className="flex min-w-0 flex-wrap sm:flex-nowrap items-center gap-0.5 sm:gap-1 text-xs">
               <input
                 ref={fileInputRef}
                 type="file"

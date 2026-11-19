@@ -35,6 +35,7 @@ function makeState(
     additionalDirectories: [],
     folders: [],
     activeFolderId: null,
+    activeThreadId: null,
     threadFolderMap: {},
     hiddenThreadIds: [],
     hasInitializedDefaultFolder: false,
@@ -46,6 +47,7 @@ function makeState(
     acpSessionIds: {},
     appDataDirs: {},
     threadOpenUI: {},
+    threadStatus: {},
     pendingAutoTitleIds: [],
     autoTitledThreadIds: [],
     manuallyRenamedThreadIds: [],
@@ -247,6 +249,24 @@ describe("acpStore hydration and folder lifecycle", () => {
     acpStore.removeQueuedMessage("thread-q", q1.id);
     expect(acpStore.getState().queuedMessages["thread-q"]).toHaveLength(1);
     expect(acpStore.dequeueMessage("thread-q")?.id).toBe(q2.id);
+
+    // Per-thread sidebar activity status lifecycle (working -> needs_input -> unread -> viewed)
+    acpStore.markThreadViewed("thread-other");
+    acpStore.setThreadStatus("thread-bg", "working");
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBe("working");
+    acpStore.completeThreadRun("thread-bg");
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBe("unread");
+    acpStore.markThreadViewed("thread-bg");
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBeUndefined();
+
+    acpStore.setThreadStatus("thread-bg", "working");
+    acpStore.completeThreadRun("thread-bg", { needsInput: true });
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBe("needs_input");
+    acpStore.markThreadViewed("thread-bg");
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBe("needs_input");
+    acpStore.setThreadStatus("thread-bg", "working");
+    acpStore.completeThreadRun("thread-bg");
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBeUndefined();
     expect(acpStore.getState().queuedMessages["thread-q"]).toBeUndefined();
     acpStore.enqueueMessage("thread-q", { text: "to-clear", attachments: [] });
     expect(acpStore.clearQueuedMessages("thread-q")).toHaveLength(1);

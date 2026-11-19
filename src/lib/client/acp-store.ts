@@ -77,12 +77,15 @@ export const DEFAULT_CLI_COMMANDS: AcpCommand[] = [
   { name: "boost", description: "Invoke the Boost multi-agent orchestrator for complex tasks.", category: "cli" },
 ];
 
+export type ThreadActivityStatus = "working" | "needs_input" | "unread";
+
 export interface AcpClientState {
   hydrated: boolean;
   cwd: string;
   additionalDirectories: string[];
   folders: WorkspaceFolder[];
   activeFolderId: string | null;
+  activeThreadId: string | null;
   threadFolderMap: Record<string, string>;
   hiddenThreadIds: string[];
   hasInitializedDefaultFolder: boolean;
@@ -94,6 +97,7 @@ export interface AcpClientState {
   acpSessionIds: Record<string, string>;
   appDataDirs: Record<string, AcpAppDataDir>;
   threadOpenUI: Record<string, boolean>;
+  threadStatus: Record<string, ThreadActivityStatus>;
   pendingAutoTitleIds: string[];
   autoTitledThreadIds: string[];
   manuallyRenamedThreadIds: string[];
@@ -256,6 +260,7 @@ const INITIAL_STATE: AcpClientState = {
   additionalDirectories: [],
   folders: [],
   activeFolderId: null,
+  activeThreadId: null,
   threadFolderMap: {},
   hiddenThreadIds: [],
   hasInitializedDefaultFolder: false,
@@ -267,6 +272,7 @@ const INITIAL_STATE: AcpClientState = {
   acpSessionIds: {},
   appDataDirs: {},
   threadOpenUI: {},
+  threadStatus: {},
   pendingAutoTitleIds: [],
   autoTitledThreadIds: [],
   manuallyRenamedThreadIds: [],
@@ -487,9 +493,21 @@ export const acpStore = {
         break;
     }
 
+    let nextThreadStatus = state.threadStatus;
+    if (payload.type === "permission_request") {
+      nextThreadStatus = { ...state.threadStatus, [threadId]: "needs_input" };
+    } else if (
+      payload.type === "permission_resolved" &&
+      next.pendingPermissions.length === 0 &&
+      state.threadStatus[threadId] === "needs_input"
+    ) {
+      nextThreadStatus = { ...state.threadStatus, [threadId]: "working" };
+    }
+
     state = {
       ...state,
       snapshots: { ...state.snapshots, [threadId]: next },
+      threadStatus: nextThreadStatus,
     };
     emit();
   },
@@ -497,17 +515,73 @@ export const acpStore = {
   removePendingPermission(threadId: string, requestId: string): void {
     const prev = state.snapshots[threadId];
     if (!prev) return;
+    const remaining = prev.pendingPermissions.filter((p) => p.requestId !== requestId);
+    let nextThreadStatus = state.threadStatus;
+    if (remaining.length === 0 && state.threadStatus[threadId] === "needs_input") {
+      nextThreadStatus = { ...state.threadStatus, [threadId]: "working" };
+    }
     state = {
       ...state,
       snapshots: {
         ...state.snapshots,
         [threadId]: {
           ...prev,
-          pendingPermissions: prev.pendingPermissions.filter((p) => p.requestId !== requestId),
+          pendingPermissions: remaining,
         },
       },
+      threadStatus: nextThreadStatus,
     };
     emit();
+  },
+
+  setThreadStatus(threadId: string, status: ThreadActivityStatus | null): void {
+    if (!threadId) return;
+    if (status === null) {
+      if (!(threadId in state.threadStatus)) return;
+      const next = { ...state.threadStatus };
+      delete next[threadId];
+      state = { ...state, threadStatus: next };
+      emit();
+      return;
+    }
+    if (state.threadStatus[threadId] === status) return;
+    state = {
+      ...state,
+      threadStatus: { ...state.threadStatus, [threadId]: status },
+    };
+    emit();
+  },
+
+  markThreadViewed(threadId: string | null): void {
+    const normalized = threadId || null;
+    const shouldClearUnread =
+      normalized !== null && state.threadStatus[normalized] === "unread";
+    if (state.activeThreadId === normalized && !shouldClearUnread) return;
+
+    let nextThreadStatus = state.threadStatus;
+    if (shouldClearUnread && normalized) {
+      nextThreadStatus = { ...state.threadStatus };
+      delete nextThreadStatus[normalized];
+    }
+    state = {
+      ...state,
+      activeThreadId: normalized,
+      threadStatus: nextThreadStatus,
+    };
+    emit();
+  },
+
+  completeThreadRun(threadId: string, options?: { needsInput?: boolean }): void {
+    if (!threadId) return;
+    if (options?.needsInput) {
+      this.setThreadStatus(threadId, "needs_input");
+      return;
+    }
+    if (state.activeThreadId && state.activeThreadId === threadId) {
+      this.setThreadStatus(threadId, null);
+    } else {
+      this.setThreadStatus(threadId, "unread");
+    }
   },
 
   setPreferences(patch: {

@@ -44,6 +44,8 @@ export function FolderSidebar() {
   const activeFolderId = useAcpStore((s) => s.activeFolderId);
   const threadFolderMap = useAcpStore((s) => s.threadFolderMap);
   const hiddenThreadIds = useAcpStore((s) => s.hiddenThreadIds);
+  const snapshots = useAcpStore((s) => s.snapshots);
+  const threadStatus = useAcpStore((s) => s.threadStatus);
   const hydrated = useAcpStore((s) => s.hydrated);
 
   const [hasRequestedThreads, setHasRequestedThreads] = useState(false);
@@ -56,6 +58,10 @@ export function FolderSidebar() {
     setHasRequestedThreads(true);
     loadThreads();
   }, [loadThreads]);
+
+  useEffect(() => {
+    acpStore.markThreadViewed(selectedThreadId);
+  }, [selectedThreadId]);
 
   useEffect(() => {
     if (renamingThreadId) {
@@ -248,6 +254,12 @@ export function FolderSidebar() {
                         const isRenaming = renamingThreadId === thread.id;
                         const isLast = idx === folderThreads.length - 1;
                         const ageLabel = formatShortAge(thread.createdAt);
+                        const snap = snapshots[thread.id];
+                        const status = threadStatus[thread.id];
+                        const needsInput =
+                          status === "needs_input" || (snap?.pendingPermissions.length ?? 0) > 0;
+                        const isWorking = !needsInput && (status === "working" || Boolean(snap?.isStreaming));
+                        const isUnread = !needsInput && !isWorking && status === "unread";
 
                         return (
                           <li key={thread.id} className="relative pl-4">
@@ -255,12 +267,12 @@ export function FolderSidebar() {
                             {!isLast && (
                               <span
                                 aria-hidden="true"
-                                className="pointer-events-none absolute left-0 top-0 bottom-0 w-px bg-black/15 dark:bg-white/15"
+                                className="pointer-events-none absolute left-0 top-0 bottom-0 w-px bg-black/10 dark:bg-white/10"
                               />
                             )}
                             <span
                               aria-hidden="true"
-                              className="pointer-events-none absolute left-0 top-0 h-[15px] w-3 rounded-bl-[4px] border-b border-l border-black/15 dark:border-white/15"
+                              className="pointer-events-none absolute left-0 top-0 h-[16px] w-3 rounded-bl-[4px] border-b border-l border-black/10 dark:border-white/10"
                             />
 
                             {isRenaming ? (
@@ -308,16 +320,34 @@ export function FolderSidebar() {
                                       nav.navigate(undefined);
                                     }
                                   }}
-                                  className="flex min-h-[24px] flex-1 min-w-0 items-center rounded text-left text-[12.5px] leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
+                                  className="flex min-h-[28px] flex-1 min-w-0 items-center rounded text-left text-[13px] leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
                                 >
                                   <span className="truncate">{thread.title}</span>
                                 </button>
 
-                                {ageLabel && (
+                                {needsInput ? (
+                                  <span
+                                    title="Needs your input"
+                                    aria-label="Needs your input"
+                                    className="mr-1 h-2 w-2 shrink-0 rounded-full bg-rose-500 motion-safe:animate-pulse group-hover/thread:hidden group-focus-within/thread:hidden"
+                                  />
+                                ) : isWorking ? (
+                                  <span
+                                    title="Working..."
+                                    aria-label="Working"
+                                    className="mr-1 h-2 w-2 shrink-0 rounded-full bg-amber-500 motion-safe:animate-pulse group-hover/thread:hidden group-focus-within/thread:hidden"
+                                  />
+                                ) : isUnread ? (
+                                  <span
+                                    title="Finished responding"
+                                    aria-label="Finished responding"
+                                    className="mr-1 h-2 w-2 shrink-0 rounded-full bg-emerald-500 group-hover/thread:hidden group-focus-within/thread:hidden"
+                                  />
+                                ) : ageLabel ? (
                                   <span className="shrink-0 text-[10px] tabular-nums opacity-45 group-hover/thread:hidden group-focus-within/thread:hidden">
                                     {ageLabel}
                                   </span>
-                                )}
+                                ) : null}
 
                                 <div className="hidden shrink-0 items-center group-hover/thread:flex group-focus-within/thread:flex">
                                   <button

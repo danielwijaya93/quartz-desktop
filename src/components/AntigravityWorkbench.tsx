@@ -61,24 +61,20 @@ function WelcomeHero() {
   const workspaceTitle = activeFolder?.cwd || cwd;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col items-center justify-center px-6 py-8 text-center">
+    <div className="mx-auto flex w-full max-w-[680px] flex-col items-center justify-center px-6 py-6 text-center">
       {workspaceLabel && (
         <div
           title={workspaceTitle}
-          className="mb-3 inline-flex max-w-full items-center gap-1.5 rounded-full border border-black/10 dark:border-white/12 bg-black/[0.03] dark:bg-white/[0.05] px-2.5 py-1 text-[11px] font-medium opacity-75"
+          className="mb-3 inline-flex max-w-full items-center gap-1.5 rounded-full border border-black/[0.08] dark:border-white/[0.1] bg-black/[0.02] dark:bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium opacity-75"
         >
-          <Folder className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
+          <Folder className="h-3 w-3 shrink-0 opacity-65" aria-hidden="true" />
           <span className="truncate font-mono">{workspaceLabel}</span>
         </div>
       )}
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+      <h1 className="text-xl font-medium tracking-tight sm:text-2xl">
         Antigravity Generative UI
       </h1>
-      <p className="mt-2 max-w-xl text-sm opacity-75">
-        Powered by <span className="font-mono">agy acp</span> and OpenUI. Every reply renders as
-        live charts, forms, tables, and dashboards—with full slash command, skill, and MCP parity.
-      </p>
-      <div className="mt-6 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
+      <div className="mt-5 grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
         {STARTERS.map((starter) => {
           const Icon = starter.icon;
           return (
@@ -87,15 +83,15 @@ function WelcomeHero() {
               type="button"
               disabled={isRunning}
               onClick={() => void processMessage({ role: "user", content: starter.prompt })}
-              className="group flex min-h-[54px] items-start gap-3 rounded-xl border border-black/10 dark:border-white/12 bg-black/[0.02] dark:bg-white/[0.03] px-3.5 py-3 text-left transition-all hover:border-black/20 dark:hover:border-white/25 hover:bg-black/[0.04] dark:hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="group flex min-h-[52px] items-start gap-2.5 rounded-xl border border-black/[0.07] dark:border-white/[0.09] bg-black/[0.015] dark:bg-white/[0.025] px-3.5 py-2.5 text-left transition-all hover:border-black/15 dark:hover:border-white/20 hover:bg-black/[0.035] dark:hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Icon
-                className="mt-0.5 h-4 w-4 shrink-0 opacity-65 transition-opacity group-hover:opacity-100"
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-60 transition-opacity group-hover:opacity-95"
                 aria-hidden="true"
               />
               <span className="min-w-0">
                 <span className="block text-xs font-medium">{starter.displayText}</span>
-                <span className="mt-0.5 block truncate text-[11px] opacity-60">
+                <span className="mt-0.5 block truncate text-[11px] opacity-55">
                   {starter.subtitle}
                 </span>
               </span>
@@ -114,9 +110,9 @@ function ImportSessionButton({ className = "" }: { className?: string }) {
       aria-label="Import session from current workspace"
       title="Import session from current workspace"
       onClick={() => acpStore.setActiveModal("sessions")}
-      className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.04] opacity-70 transition-all hover:bg-black/[0.06] dark:hover:bg-white/[0.1] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer ${className}`}
+      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-70 transition-colors hover:bg-black/[0.06] dark:hover:bg-white/[0.08] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer ${className}`}
     >
-      <History className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <History className="h-4 w-4 shrink-0" aria-hidden="true" />
     </button>
   );
 }
@@ -161,7 +157,7 @@ export function AntigravityWorkbench() {
           </AgentInterface.SidebarContent>
 
           <AgentInterface.SidebarFooter>
-            <div className="flex w-full items-center justify-between border-t border-black/[0.06] dark:border-white/[0.08] px-1 pt-2">
+            <div className="antigravity-sidebar-footer-bar flex w-full items-center justify-between border-t border-black/[0.06] dark:border-white/[0.08] px-1 pt-2">
               <ImportSessionButton />
               <AgentInterface.ThemeModeToggle mode={mode} onModeChange={setPreference} />
             </div>
