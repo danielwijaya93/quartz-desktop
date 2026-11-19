@@ -2,8 +2,11 @@
 
 import {
   acpStore,
+  groupActiveThreadsByStatus,
   partitionThreadsByFolder,
+  resolveThreadActivityStatus,
   useAcpStore,
+  type ThreadActivityStatus,
   type WorkspaceFolder,
 } from "@/lib/client/acp-store";
 import { useThreadList, type Thread } from "@openuidev/react-headless";
@@ -28,6 +31,28 @@ function formatShortAge(createdAt: string | number | undefined): string {
   const diffDay = Math.floor(diffHr / 24);
   if (diffDay < 30) return `${diffDay}d`;
   return `${Math.floor(diffDay / 30)}mo`;
+}
+
+function getStatusDotClass(status: ThreadActivityStatus): string {
+  switch (status) {
+    case "needs_input":
+      return "bg-rose-500 motion-safe:animate-pulse";
+    case "working":
+      return "bg-amber-500 motion-safe:animate-pulse";
+    case "unread":
+      return "bg-emerald-500";
+  }
+}
+
+function getStatusDotTitle(status: ThreadActivityStatus): string {
+  switch (status) {
+    case "needs_input":
+      return "Needs your input";
+    case "working":
+      return "Working...";
+    case "unread":
+      return "Finished responding";
+  }
 }
 
 export function FolderSidebar() {
@@ -80,6 +105,25 @@ export function FolderSidebar() {
         activeFolderId,
       }),
     [threads, folders, threadFolderMap, hiddenThreadIds, activeFolderId],
+  );
+
+  const activeStatusGroups = useMemo(
+    () =>
+      groupActiveThreadsByStatus({
+        threads,
+        folders,
+        threadFolderMap,
+        hiddenThreadIds,
+        activeFolderId,
+        threadStatus,
+        snapshots,
+      }),
+    [threads, folders, threadFolderMap, hiddenThreadIds, activeFolderId, threadStatus, snapshots],
+  );
+
+  const activeThreadCount = useMemo(
+    () => activeStatusGroups.reduce((sum, g) => sum + g.items.length, 0),
+    [activeStatusGroups],
   );
 
   // Sort folders with threads (or currently active empty workspace) above empty (0) folders
@@ -138,6 +182,70 @@ export function FolderSidebar() {
   return (
     <div className="openui-agent-thread-list" aria-label="Workspace folders and threads">
       <div className="openui-agent-thread-list-content">
+        {!showSkeleton && activeStatusGroups.length > 0 && (
+          <section aria-label="Active threads by status" className="mb-3">
+            <div className="flex items-center justify-between px-1.5 pb-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider opacity-50">
+                Active
+              </span>
+              <span className="rounded-full bg-black/[0.05] dark:bg-white/[0.08] px-1.5 py-0.2 text-[10px] font-medium tabular-nums opacity-65">
+                {activeThreadCount}
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {activeStatusGroups.map((group) => (
+                <div key={group.status} className="space-y-0.5">
+                  <div className="flex items-center gap-1.5 px-1.5 py-0.5 text-[11px] font-medium opacity-60">
+                    <span
+                      aria-hidden="true"
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${getStatusDotClass(group.status)}`}
+                    />
+                    <span>{group.label}</span>
+                  </div>
+                  <ul className="space-y-0.5">
+                    {group.items.map(({ thread, folderId, folderName }) => {
+                      const selected = selectedThreadId === thread.id;
+                      return (
+                        <li key={thread.id}>
+                          <button
+                            type="button"
+                            title={folderName ? `${thread.title} (${folderName})` : thread.title}
+                            onClick={() => {
+                              if (folderId) {
+                                acpStore.selectFolder(folderId);
+                              }
+                              acpStore.markThreadViewed(thread.id, { acknowledgeCurrent: true });
+                              selectThread(thread.id);
+                              if (nav.path !== undefined) {
+                                nav.navigate(undefined);
+                              }
+                            }}
+                            className={`relative flex min-h-[28px] w-full items-center justify-between gap-2 rounded-md pl-2.5 pr-1.5 py-0.5 text-left text-[13px] leading-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer ${
+                              selected
+                                ? "bg-black/[0.07] dark:bg-white/[0.1] font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2.5px] before:rounded-full before:bg-black/80 dark:before:bg-white/85"
+                                : "opacity-85 hover:bg-black/[0.04] dark:hover:bg-white/[0.05] hover:opacity-100"
+                            }`}
+                          >
+                            <span className="truncate">{thread.title}</span>
+                            {folderName && (
+                              <span className="max-w-[84px] shrink-0 truncate text-[10px] opacity-45">
+                                {folderName}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 h-px bg-black/[0.06] dark:bg-white/[0.08]" />
+          </section>
+        )}
+
         <div className="flex items-center justify-between px-1.5 pb-1.5">
           <span className="text-[11px] font-semibold uppercase tracking-wider opacity-50">
             Workspaces
@@ -254,12 +362,11 @@ export function FolderSidebar() {
                         const isRenaming = renamingThreadId === thread.id;
                         const isLast = idx === folderThreads.length - 1;
                         const ageLabel = formatShortAge(thread.createdAt);
-                        const snap = snapshots[thread.id];
-                        const status = threadStatus[thread.id];
-                        const needsInput =
-                          status === "needs_input" || (snap?.pendingPermissions.length ?? 0) > 0;
-                        const isWorking = !needsInput && (status === "working" || Boolean(snap?.isStreaming));
-                        const isUnread = !needsInput && !isWorking && status === "unread";
+                        const activityStatus = resolveThreadActivityStatus(
+                          thread.id,
+                          threadStatus,
+                          snapshots,
+                        );
 
                         return (
                           <li key={thread.id} className="relative pl-4">
@@ -315,6 +422,9 @@ export function FolderSidebar() {
                                   title={thread.title}
                                   onClick={() => {
                                     acpStore.selectFolder(folder.id);
+                                    acpStore.markThreadViewed(thread.id, {
+                                      acknowledgeCurrent: true,
+                                    });
                                     selectThread(thread.id);
                                     if (nav.path !== undefined) {
                                       nav.navigate(undefined);
@@ -325,23 +435,11 @@ export function FolderSidebar() {
                                   <span className="truncate">{thread.title}</span>
                                 </button>
 
-                                {needsInput ? (
+                                {activityStatus ? (
                                   <span
-                                    title="Needs your input"
-                                    aria-label="Needs your input"
-                                    className="mr-1 h-2 w-2 shrink-0 rounded-full bg-rose-500 motion-safe:animate-pulse group-hover/thread:hidden group-focus-within/thread:hidden"
-                                  />
-                                ) : isWorking ? (
-                                  <span
-                                    title="Working..."
-                                    aria-label="Working"
-                                    className="mr-1 h-2 w-2 shrink-0 rounded-full bg-amber-500 motion-safe:animate-pulse group-hover/thread:hidden group-focus-within/thread:hidden"
-                                  />
-                                ) : isUnread ? (
-                                  <span
-                                    title="Finished responding"
-                                    aria-label="Finished responding"
-                                    className="mr-1 h-2 w-2 shrink-0 rounded-full bg-emerald-500 group-hover/thread:hidden group-focus-within/thread:hidden"
+                                    title={getStatusDotTitle(activityStatus)}
+                                    aria-label={getStatusDotTitle(activityStatus)}
+                                    className={`mr-1 h-2 w-2 shrink-0 rounded-full ${getStatusDotClass(activityStatus)} group-hover/thread:hidden group-focus-within/thread:hidden`}
                                   />
                                 ) : ageLabel ? (
                                   <span className="shrink-0 text-[10px] tabular-nums opacity-45 group-hover/thread:hidden group-focus-within/thread:hidden">

@@ -3,6 +3,7 @@ import {
   acpStore,
   getBootstrapThreadKey,
   getMergedSlashCommands,
+  groupActiveThreadsByStatus,
   partitionThreadsByFolder,
   selectEffectiveOpenUI,
   selectEffectiveSnapshot,
@@ -268,10 +269,78 @@ describe("acpStore hydration and folder lifecycle", () => {
     expect(acpStore.getState().threadStatus["thread-bg"]).toBe("needs_input");
     acpStore.setThreadStatus("thread-bg", "working");
     acpStore.completeThreadRun("thread-bg");
+    // Stays "unread" (Ready) while user remains on the finished thread until they switch away or acknowledge it
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBe("unread");
+    acpStore.markThreadViewed("thread-bg", { acknowledgeCurrent: true });
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBeUndefined();
+
+    acpStore.setThreadStatus("thread-bg", "working");
+    acpStore.completeThreadRun("thread-bg");
+    expect(acpStore.getState().threadStatus["thread-bg"]).toBe("unread");
+    acpStore.markThreadViewed("thread-other");
     expect(acpStore.getState().threadStatus["thread-bg"]).toBeUndefined();
     expect(acpStore.getState().queuedMessages["thread-q"]).toBeUndefined();
     acpStore.enqueueMessage("thread-q", { text: "to-clear", attachments: [] });
     expect(acpStore.clearQueuedMessages("thread-q")).toHaveLength(1);
     expect(acpStore.getState().queuedMessages["thread-q"]).toBeUndefined();
+  });
+});
+
+describe("groupActiveThreadsByStatus", () => {
+  it("groups only non-hidden active threads in priority order with workspace metadata", () => {
+    const folders = [
+      { id: "f1", name: "alpha", cwd: "/alpha", collapsed: false },
+      { id: "f2", name: "beta", cwd: "/beta", collapsed: false },
+    ];
+    const threads = [
+      { id: "t-idle", title: "Idle" },
+      { id: "t-unread", title: "Finished" },
+      { id: "t-working", title: "Running" },
+      { id: "t-input", title: "Question" },
+      { id: "t-hidden", title: "Hidden Working" },
+    ];
+
+    const groups = groupActiveThreadsByStatus({
+      threads,
+      folders,
+      threadFolderMap: {
+        "t-unread": "f2",
+        "t-working": "f1",
+        "t-input": "f2",
+      },
+      hiddenThreadIds: ["t-hidden"],
+      activeFolderId: "f1",
+      threadStatus: {
+        "t-unread": "unread",
+        "t-working": "working",
+        "t-input": "needs_input",
+        "t-hidden": "working",
+      },
+      snapshots: {},
+    });
+
+    expect(groups.map((g) => g.status)).toEqual(["needs_input", "working", "unread"]);
+    expect(groups[0]?.items).toEqual([
+      { thread: threads[3], status: "needs_input", folderId: "f2", folderName: "beta" },
+    ]);
+    expect(groups[1]?.items).toEqual([
+      { thread: threads[2], status: "working", folderId: "f1", folderName: "alpha" },
+    ]);
+    expect(groups[2]?.items).toEqual([
+      { thread: threads[1], status: "unread", folderId: "f2", folderName: "beta" },
+    ]);
+  });
+
+  it("returns empty array when no threads are active", () => {
+    const groups = groupActiveThreadsByStatus({
+      threads: [{ id: "t1", title: "Idle" }],
+      folders: [{ id: "f1", name: "alpha", cwd: "/alpha", collapsed: false }],
+      threadFolderMap: {},
+      hiddenThreadIds: [],
+      activeFolderId: "f1",
+      threadStatus: {},
+      snapshots: {},
+    });
+    expect(groups).toEqual([]);
   });
 });

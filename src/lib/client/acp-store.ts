@@ -552,16 +552,25 @@ export const acpStore = {
     emit();
   },
 
-  markThreadViewed(threadId: string | null): void {
+  markThreadViewed(threadId: string | null, options?: { acknowledgeCurrent?: boolean }): void {
     const normalized = threadId || null;
-    const shouldClearUnread =
-      normalized !== null && state.threadStatus[normalized] === "unread";
-    if (state.activeThreadId === normalized && !shouldClearUnread) return;
+    const prevActiveId = state.activeThreadId;
+    const clearPrev =
+      prevActiveId !== null &&
+      prevActiveId !== normalized &&
+      state.threadStatus[prevActiveId] === "unread";
+    const clearNext =
+      normalized !== null &&
+      (prevActiveId !== normalized || Boolean(options?.acknowledgeCurrent)) &&
+      state.threadStatus[normalized] === "unread";
+
+    if (prevActiveId === normalized && !clearPrev && !clearNext) return;
 
     let nextThreadStatus = state.threadStatus;
-    if (shouldClearUnread && normalized) {
+    if (clearPrev || clearNext) {
       nextThreadStatus = { ...state.threadStatus };
-      delete nextThreadStatus[normalized];
+      if (clearPrev && prevActiveId) delete nextThreadStatus[prevActiveId];
+      if (clearNext && normalized) delete nextThreadStatus[normalized];
     }
     state = {
       ...state,
@@ -579,21 +588,12 @@ export const acpStore = {
         ? { ...state.snapshots, [threadId]: { ...prevSnap, isStreaming: false } }
         : state.snapshots;
 
-    const nextStatus: ThreadActivityStatus | null = options?.needsInput
-      ? "needs_input"
-      : state.activeThreadId && state.activeThreadId === threadId
-        ? null
-        : "unread";
+    const nextStatus: ThreadActivityStatus = options?.needsInput ? "needs_input" : "unread";
 
-    let nextThreadStatus = state.threadStatus;
-    if (nextStatus === null) {
-      if (threadId in state.threadStatus) {
-        nextThreadStatus = { ...state.threadStatus };
-        delete nextThreadStatus[threadId];
-      }
-    } else if (state.threadStatus[threadId] !== nextStatus) {
-      nextThreadStatus = { ...state.threadStatus, [threadId]: nextStatus };
-    }
+    const nextThreadStatus =
+      state.threadStatus[threadId] === nextStatus
+        ? state.threadStatus
+        : { ...state.threadStatus, [threadId]: nextStatus };
 
     if (nextSnapshots === state.snapshots && nextThreadStatus === state.threadStatus) return;
     state = {
@@ -1054,6 +1054,85 @@ export function partitionThreadsByFolder<T extends { id: string }>(params: {
   }
 
   return { byFolder, hiddenThreads };
+}
+
+/** Resolves the effective sidebar activity status for a thread from client status + snapshot state. */
+export function resolveThreadActivityStatus(
+  threadId: string,
+  threadStatus: Record<string, ThreadActivityStatus>,
+  snapshots: Record<string, AcpSessionSnapshot>,
+): ThreadActivityStatus | null {
+  const status = threadStatus[threadId];
+  const snap = snapshots[threadId];
+  if (status === "needs_input" || (snap?.pendingPermissions.length ?? 0) > 0) {
+    return "needs_input";
+  }
+  if (status === "working" || Boolean(snap?.isStreaming)) {
+    return "working";
+  }
+  if (status === "unread") {
+    return "unread";
+  }
+  return null;
+}
+
+export interface ActiveThreadItem<T extends { id: string }> {
+  thread: T;
+  status: ThreadActivityStatus;
+  folderId: string | null;
+  folderName: string | null;
+}
+
+export interface ActiveThreadStatusGroup<T extends { id: string }> {
+  status: ThreadActivityStatus;
+  label: string;
+  items: ActiveThreadItem<T>[];
+}
+
+const ACTIVE_STATUS_ORDER: Array<{ status: ThreadActivityStatus; label: string }> = [
+  { status: "needs_input", label: "Needs input" },
+  { status: "working", label: "Working" },
+  { status: "unread", label: "Ready" },
+];
+
+/** Groups non-hidden active threads by status priority (`needs_input` -> `working` -> `unread`). */
+export function groupActiveThreadsByStatus<T extends { id: string }>(params: {
+  threads: T[];
+  folders: WorkspaceFolder[];
+  threadFolderMap: Record<string, string>;
+  hiddenThreadIds: string[];
+  activeFolderId: string | null;
+  threadStatus: Record<string, ThreadActivityStatus>;
+  snapshots: Record<string, AcpSessionSnapshot>;
+}): ActiveThreadStatusGroup<T>[] {
+  const hiddenSet = new Set(params.hiddenThreadIds);
+  const folderById = new Map(params.folders.map((f) => [f.id, f]));
+  const fallbackFolderId =
+    (params.activeFolderId && folderById.has(params.activeFolderId)
+      ? params.activeFolderId
+      : params.folders[0]?.id) ?? null;
+
+  const buckets: Record<ThreadActivityStatus, ActiveThreadItem<T>[]> = {
+    needs_input: [],
+    working: [],
+    unread: [],
+  };
+
+  for (const thread of params.threads) {
+    if (hiddenSet.has(thread.id)) continue;
+    const status = resolveThreadActivityStatus(thread.id, params.threadStatus, params.snapshots);
+    if (!status) continue;
+    const mapped = params.threadFolderMap[thread.id];
+    const folderId = mapped && folderById.has(mapped) ? mapped : fallbackFolderId;
+    const folderName = folderId ? (folderById.get(folderId)?.name ?? null) : null;
+    buckets[status].push({ thread, status, folderId, folderName });
+  }
+
+  return ACTIVE_STATUS_ORDER.map(({ status, label }) => ({
+    status,
+    label,
+    items: buckets[status],
+  })).filter((group) => group.items.length > 0);
 }
 
 export function getMergedSlashCommands(snapshot?: AcpSessionSnapshot): AcpCommand[] {
