@@ -117,7 +117,13 @@ export function ThreadRunRecovery() {
                   m.content.trimStart().startsWith('{"CommandLine":')),
             );
 
-        if (lastMsg.role !== "user" && !hasPendingBgTaskInTurn) return;
+        const latestLastMsg = latestMsgs[latestMsgs.length - 1];
+        const hasFinalAssistantText =
+          latestLastMsg?.role === "assistant" &&
+          typeof latestLastMsg.content === "string" &&
+          latestLastMsg.content.trim().length > 0;
+
+        if (hasFinalAssistantText && !hasPendingBgTaskInTurn) return;
 
         // Fallback if server restarted: reload from ACP's persisted session store
         const state = acpStore.getState();
