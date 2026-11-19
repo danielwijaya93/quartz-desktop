@@ -786,7 +786,7 @@ export function AntigravityComposer({
           />
 
           <div className="openui-agent-thread-composer__action-bar flex items-center justify-between gap-2">
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+            <div className="antigravity-no-scrollbar flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto text-xs">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -802,10 +802,15 @@ export function AntigravityComposer({
                 aria-label="Attach files"
                 title="Attach images, PDFs, CSVs, or other files"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex min-h-[28px] min-w-[28px] items-center justify-center rounded-lg px-2 py-1 opacity-65 transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:opacity-100 cursor-pointer"
+                className="inline-flex min-h-[28px] min-w-[28px] shrink-0 items-center justify-center rounded-lg px-2 py-1 opacity-65 transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
               >
                 <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
+
+              <span
+                aria-hidden="true"
+                className="mx-0.5 h-3.5 w-px shrink-0 bg-black/10 dark:bg-white/10"
+              />
 
               <ComposerConfigControls />
             </div>
@@ -819,7 +824,7 @@ export function AntigravityComposer({
                   onClick={handleSubmit}
                   aria-label="Queue message"
                   title="Queue message for after current turn (Enter)"
-                  className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black"
+                  className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/35 dark:focus-visible:ring-white/40 cursor-pointer"
                 >
                   <ArrowUp className="h-4 w-4" aria-hidden="true" />
                 </button>
@@ -830,7 +835,7 @@ export function AntigravityComposer({
                 onClick={isRunning ? handleCancel : handleSubmit}
                 aria-label={isRunning ? "Cancel generation (Esc)" : "Send message"}
                 title={isRunning ? "Cancel generation (Esc)" : "Send message (Enter)"}
-                className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black disabled:opacity-40"
+                className="openui-agent-thread-composer__submit-button inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/35 dark:focus-visible:ring-white/40 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 disabled={!isRunning && !textContent.trim() && attachments.length === 0}
               >
                 {isRunning ? (

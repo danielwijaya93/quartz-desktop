@@ -5,7 +5,6 @@ import {
 } from "@/lib/acp/replay";
 export { convertReplayedUpdatesToMessages, extractAcpToolOutput };
 import type {
-  AcpAgentId,
   AcpAppDataDir,
   AcpCommand,
   AcpConfigOption,
@@ -57,7 +56,6 @@ interface PendingPermissionEntry {
 export interface AcpSessionEntry {
   threadId: string;
   sessionId: string;
-  agent: AcpAgentId;
   openuiEnabled: boolean;
   appDataDir: AcpAppDataDir;
   child: ChildProcessWithoutNullStreams;
@@ -90,7 +88,6 @@ export interface AcpSessionEntry {
 
 export interface GetOrCreateSessionOptions {
   threadId: string;
-  agent?: AcpAgentId;
   openuiEnabled?: boolean;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
@@ -201,20 +198,11 @@ function evictOldestIfFull(): void {
   }
 }
 
-function buildSessionMeta(
-  agent: AcpAgentId,
-  openuiEnabled: boolean,
-): Record<string, unknown> | undefined {
+function buildSessionMeta(openuiEnabled: boolean): Record<string, unknown> | undefined {
   if (!openuiEnabled) return undefined;
-  const systemPromptAppend = getOpenUISystemPrompt();
-  if (agent === "quartz") {
-    return {
-      systemPrompt: { append: systemPromptAppend },
-    };
-  }
   return {
     antigravity: {
-      systemPrompt: { append: systemPromptAppend },
+      systemPrompt: { append: getOpenUISystemPrompt() },
     },
   };
 }
@@ -369,7 +357,6 @@ export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot
   return {
     threadId: entry.threadId,
     sessionId: entry.sessionId,
-    agent: entry.agent,
     appDataDir: entry.appDataDir,
     cwd: entry.cwd,
     additionalDirectories: entry.additionalDirectories,
@@ -386,15 +373,11 @@ export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot
   };
 }
 
-/** Builds the CLI command and arguments for spawning an ACP coding agent process. */
+/** Builds the CLI command and arguments for spawning the `agy acp` process. */
 export function buildAgentSpawnSpec(params: {
-  agent: AcpAgentId;
   additionalDirectories: string[];
   appDataDir?: AcpAppDataDir;
 }): { command: string; args: string[] } {
-  if (params.agent === "quartz") {
-    return { command: "quartz", args: ["acp"] };
-  }
   const args = ["acp", "--disable-telemetry"];
   if (params.appDataDir && params.appDataDir !== "antigravity-cli") {
     args.push("--app-data-dir", params.appDataDir);
@@ -406,7 +389,6 @@ export function buildAgentSpawnSpec(params: {
 }
 
 function spawnAcpConnection(params: {
-  agent: AcpAgentId;
   cwd: string;
   additionalDirectories: string[];
   appDataDir?: AcpAppDataDir;
@@ -417,7 +399,6 @@ function spawnAcpConnection(params: {
   connection: acp.ClientConnection;
 } {
   const { command, args } = buildAgentSpawnSpec({
-    agent: params.agent,
     additionalDirectories: params.additionalDirectories,
     appDataDir: params.appDataDir,
   });
@@ -575,17 +556,14 @@ async function applyConfigSafely(
 async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<AcpSessionEntry> {
   evictOldestIfFull();
 
-  const agent: AcpAgentId = options.agent === "quartz" ? "quartz" : "agy";
   const cwd = resolveWorkspaceDir(options.cwd);
-  const additionalDirectories =
-    agent === "agy" ? resolveAcpAdditionalDirs(options.additionalDirectories) : [];
-  const mcpServers = agent === "agy" ? (options.mcpServers ?? []) : [];
+  const additionalDirectories = resolveAcpAdditionalDirs(options.additionalDirectories);
+  const mcpServers = options.mcpServers ?? [];
   const appDataDir = detectSessionAppDataDir(options.acpSessionId, options.appDataDir);
 
   let entryRef: AcpSessionEntry | undefined;
 
   const { child, connection } = spawnAcpConnection({
-    agent,
     cwd,
     additionalDirectories,
     appDataDir,
@@ -610,14 +588,13 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     });
 
     const openuiEnabled = options.openuiEnabled ?? true;
-    const sessionMeta = buildSessionMeta(agent, openuiEnabled);
+    const sessionMeta = buildSessionMeta(openuiEnabled);
     const acpMcpServers = mapMcpServersToAcp(mcpServers);
     const replayUpdates: acp.SessionUpdate[] = [];
 
     const entry: AcpSessionEntry = {
       threadId: options.threadId,
       sessionId: "",
-      agent,
       openuiEnabled,
       appDataDir,
       child,
@@ -635,38 +612,23 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     };
     entryRef = entry;
 
-    const newSessionParams: acp.NewSessionRequest =
-      agent === "quartz"
-        ? {
-            cwd,
-            mcpServers: [],
-            ...(sessionMeta ? { _meta: sessionMeta } : {}),
-          }
-        : {
-            cwd,
-            additionalDirectories,
-            mcpServers: acpMcpServers,
-            ...(sessionMeta ? { _meta: sessionMeta } : {}),
-          };
+    const newSessionParams: acp.NewSessionRequest = {
+      cwd,
+      additionalDirectories,
+      mcpServers: acpMcpServers,
+      ...(sessionMeta ? { _meta: sessionMeta } : {}),
+    };
 
     let sessionResp: acp.NewSessionResponse | acp.LoadSessionResponse | acp.ResumeSessionResponse;
     if (options.acpSessionId) {
       try {
-        const loadSessionParams: acp.LoadSessionRequest =
-          agent === "quartz"
-            ? {
-                sessionId: options.acpSessionId,
-                cwd,
-                mcpServers: [],
-                ...(sessionMeta ? { _meta: sessionMeta } : {}),
-              }
-            : {
-                sessionId: options.acpSessionId,
-                cwd,
-                additionalDirectories,
-                mcpServers: acpMcpServers,
-                ...(sessionMeta ? { _meta: sessionMeta } : {}),
-              };
+        const loadSessionParams: acp.LoadSessionRequest = {
+          sessionId: options.acpSessionId,
+          cwd,
+          additionalDirectories,
+          mcpServers: acpMcpServers,
+          ...(sessionMeta ? { _meta: sessionMeta } : {}),
+        };
         sessionResp = await connection.agent.request(
           acp.AGENT_METHODS.session_load,
           loadSessionParams,
@@ -691,23 +653,21 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     entry.replayCollector = undefined;
     applySessionResponseMetadata(entry, sessionResp as SessionResponseWithModels);
 
-    if (agent === "agy") {
-      // Default to `auto` mode per configuration unless explicitly overridden
-      const targetMode = options.mode ?? "auto";
-      if (targetMode && entry.modes?.currentModeId !== targetMode) {
-        await applyConfigSafely(entry, "mode", targetMode);
-      }
-      if (options.model) {
-        await applyConfigSafely(entry, "model", options.model);
-      }
-      if (options.thoughtLevel) {
-        await applyConfigSafely(entry, "thought_level", options.thoughtLevel);
-      }
+    // Default to `auto` mode per configuration unless explicitly overridden
+    const targetMode = options.mode ?? "auto";
+    if (targetMode && entry.modes?.currentModeId !== targetMode) {
+      await applyConfigSafely(entry, "mode", targetMode);
+    }
+    if (options.model) {
+      await applyConfigSafely(entry, "model", options.model);
+    }
+    if (options.thoughtLevel) {
+      await applyConfigSafely(entry, "thought_level", options.thoughtLevel);
+    }
 
-      // Give initial session/update notifications (e.g. available_commands_update) a tick to settle
-      if (entry.commands.length === 0) {
-        await new Promise((r) => setTimeout(r, 150));
-      }
+    // Give initial session/update notifications (e.g. available_commands_update) a tick to settle
+    if (entry.commands.length === 0) {
+      await new Promise((r) => setTimeout(r, 150));
     }
 
     SESSIONS.set(options.threadId, entry);
@@ -727,13 +687,7 @@ export async function getOrCreateAcpSession(
   const requestedOpenUI = options.openuiEnabled ?? true;
   const existing = SESSIONS.get(options.threadId);
   if (existing && !existing.child.killed) {
-    if (options.agent && existing.agent !== options.agent) {
-      if (existing.isStreaming) {
-        await cancelAcpTurn(options.threadId).catch(() => {});
-      }
-      disposeEntry(existing);
-      SESSIONS.delete(options.threadId);
-    } else if (existing.openuiEnabled !== requestedOpenUI && !existing.isStreaming) {
+    if (existing.openuiEnabled !== requestedOpenUI && !existing.isStreaming) {
       const resumeSessionId = options.acpSessionId ?? (existing.sessionId || undefined);
       disposeEntry(existing);
       SESSIONS.delete(options.threadId);
@@ -835,7 +789,6 @@ async function listSessionsFromStore(
   appDataDir: AcpAppDataDir,
 ): Promise<HistoricalAcpSession[]> {
   const { child, connection } = spawnAcpConnection({
-    agent: "agy",
     cwd: resolvedCwd,
     additionalDirectories: [],
     appDataDir,
@@ -937,7 +890,6 @@ async function attemptLoadHistoricalSession(params: {
   let entryRef: AcpSessionEntry | undefined;
 
   const { child, connection } = spawnAcpConnection({
-    agent: "agy",
     cwd: params.cwd,
     additionalDirectories: params.additionalDirectories,
     appDataDir: params.appDataDir,
@@ -960,7 +912,6 @@ async function attemptLoadHistoricalSession(params: {
     const entry: AcpSessionEntry = {
       threadId: params.threadId,
       sessionId: params.acpSessionId,
-      agent: "agy",
       openuiEnabled: true,
       appDataDir: params.appDataDir,
       child,

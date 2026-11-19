@@ -28,7 +28,7 @@ export function PlanProgressStrip({ planEntries }: { planEntries: AcpPlanEntry[]
                   entry.status === "completed"
                     ? "text-emerald-500"
                     : entry.status === "in_progress"
-                      ? "text-amber-500"
+                      ? "text-amber-500 motion-safe:animate-pulse"
                       : "opacity-50"
                 }
               >
@@ -94,8 +94,8 @@ export function PendingPermissionsBanner({
                       onClick={() => onDecision(perm, opt.optionId)}
                       className={
                         isReject
-                          ? "inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-500/20"
-                          : "inline-flex min-h-[30px] items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500"
+                          ? "inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 cursor-pointer disabled:opacity-50"
+                          : "inline-flex min-h-[30px] items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 cursor-pointer disabled:opacity-50"
                       }
                     >
                       {isReject ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}

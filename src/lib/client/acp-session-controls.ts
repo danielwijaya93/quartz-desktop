@@ -1,7 +1,7 @@
 "use client";
 
-import type { AcpAgentId, AcpConfigOption, AcpSessionSnapshot, AcpUsageInfo } from "@/lib/acp/types";
-import { acpStore, selectEffectiveAgent, selectEffectiveOpenUI } from "@/lib/client/acp-store";
+import type { AcpConfigOption, AcpSessionSnapshot, AcpUsageInfo } from "@/lib/acp/types";
+import { acpStore, selectEffectiveOpenUI } from "@/lib/client/acp-store";
 import { useEffect } from "react";
 
 export const FALLBACK_MODELS = [
@@ -91,7 +91,6 @@ export function useAcpSessionBootstrap(effectiveThreadId: string, hydrated: bool
       body: JSON.stringify({
         action: "init",
         threadId: effectiveThreadId,
-        agent: selectEffectiveAgent(state, effectiveThreadId),
         openuiEnabled: selectEffectiveOpenUI(state, effectiveThreadId),
         acpSessionId: state.acpSessionIds[effectiveThreadId],
         appDataDir: state.appDataDirs[effectiveThreadId],
@@ -135,38 +134,6 @@ export async function updateAcpSessionConfig(
       threadId: effectiveThreadId,
       configId,
       value,
-    }),
-  });
-  if (res.ok) {
-    const data = (await res.json()) as { snapshot?: AcpSessionSnapshot };
-    if (data.snapshot) {
-      acpStore.setSnapshot(effectiveThreadId, data.snapshot);
-    }
-  }
-}
-
-/** Switches the active coding agent (`agy` or `quartz`) for a thread and resets its ACP session. */
-export async function switchAcpSessionAgent(
-  effectiveThreadId: string,
-  agent: AcpAgentId,
-): Promise<void> {
-  acpStore.setThreadAgent(effectiveThreadId, agent);
-  const state = acpStore.getState();
-
-  const res = await fetch("/api/acp/session", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: "switchAgent",
-      threadId: effectiveThreadId,
-      agent,
-      openuiEnabled: selectEffectiveOpenUI(state, effectiveThreadId),
-      cwd: state.cwd || undefined,
-      additionalDirectories: [],
-      mcpServers: state.sessionMcpServers,
-      mode: state.preferredMode || "auto",
-      model: state.preferredModel || undefined,
-      thoughtLevel: state.preferredThoughtLevel || undefined,
     }),
   });
   if (res.ok) {

@@ -1,7 +1,7 @@
 "use client";
 
 import type { AcpSessionSnapshot, ReplayedTranscriptMessage } from "@/lib/acp/types";
-import { acpStore, selectEffectiveAgent } from "@/lib/client/acp-store";
+import { acpStore } from "@/lib/client/acp-store";
 import { createAcpStreamAdapter } from "@/lib/client/acp-stream-adapter";
 import { createResilientSseStream } from "@/lib/client/resilient-sse";
 export { createResilientSseStream };
@@ -223,7 +223,6 @@ export function createAntigravityChatBindings(): {
           const openuiEnabled = acpStore.promoteBootstrapOpenUI(threadId);
           mergedBody = JSON.stringify({
             ...parsed,
-            agent: selectEffectiveAgent(state, threadId),
             openuiEnabled,
             acpSessionId: state.acpSessionIds[threadId],
             appDataDir: state.appDataDirs[threadId],

@@ -3,7 +3,6 @@
 import type { AttachmentKind } from "@/lib/acp/attachments";
 import type { SyncedState } from "@/lib/acp/sync-store";
 import type {
-  AcpAgentId,
   AcpAppDataDir,
   AcpCommand,
   AcpCustomEventPayload,
@@ -91,11 +90,9 @@ export interface AcpClientState {
   preferredMode: string;
   preferredModel: string;
   preferredThoughtLevel: string;
-  preferredAgent: AcpAgentId;
   snapshots: Record<string, AcpSessionSnapshot>;
   acpSessionIds: Record<string, string>;
   appDataDirs: Record<string, AcpAppDataDir>;
-  threadAgents: Record<string, AcpAgentId>;
   threadOpenUI: Record<string, boolean>;
   pendingAutoTitleIds: string[];
   autoTitledThreadIds: string[];
@@ -159,17 +156,6 @@ function sanitizeAppDataDirRecord(raw: unknown): Record<string, AcpAppDataDir> {
   const out: Record<string, AcpAppDataDir> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (typeof k === "string" && k && (v === "antigravity" || v === "antigravity-cli")) {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-
-function sanitizeAgentRecord(raw: unknown): Record<string, AcpAgentId> {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const out: Record<string, AcpAgentId> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    if (typeof k === "string" && k && (v === "agy" || v === "quartz")) {
       out[k] = v;
     }
   }
@@ -250,10 +236,8 @@ function loadInitialPrefs(): Partial<AcpClientState> {
       preferredModel: typeof parsed.preferredModel === "string" ? parsed.preferredModel : "",
       preferredThoughtLevel:
         typeof parsed.preferredThoughtLevel === "string" ? parsed.preferredThoughtLevel : "",
-      preferredAgent: parsed.preferredAgent === "quartz" ? "quartz" : "agy",
       acpSessionIds,
       appDataDirs: sanitizeAppDataDirRecord(parsed.appDataDirs),
-      threadAgents: sanitizeAgentRecord(parsed.threadAgents),
       threadOpenUI: sanitizeBooleanRecord(parsed.threadOpenUI),
       pendingAutoTitleIds: sanitizeStringArray(parsed.pendingAutoTitleIds),
       autoTitledThreadIds: sanitizeStringArray(parsed.autoTitledThreadIds),
@@ -279,11 +263,9 @@ const INITIAL_STATE: AcpClientState = {
   preferredMode: "auto",
   preferredModel: "",
   preferredThoughtLevel: "",
-  preferredAgent: "agy",
   snapshots: {},
   acpSessionIds: {},
   appDataDirs: {},
-  threadAgents: {},
   threadOpenUI: {},
   pendingAutoTitleIds: [],
   autoTitledThreadIds: [],
@@ -312,7 +294,6 @@ function scheduleWorkspaceSync(): void {
       hiddenThreadIds: state.hiddenThreadIds,
       acpSessionIds: state.acpSessionIds,
       appDataDirs: state.appDataDirs,
-      threadAgents: state.threadAgents,
     });
   }, 150);
 }
@@ -342,9 +323,7 @@ function persistPrefs(): void {
         preferredMode: state.preferredMode,
         preferredModel: state.preferredModel,
         preferredThoughtLevel: state.preferredThoughtLevel,
-        preferredAgent: state.preferredAgent,
         appDataDirs: state.appDataDirs,
-        threadAgents: state.threadAgents,
         threadOpenUI: state.threadOpenUI,
         pendingAutoTitleIds: state.pendingAutoTitleIds,
         autoTitledThreadIds: state.autoTitledThreadIds,
@@ -411,7 +390,6 @@ export const acpStore = {
         ),
         acpSessionIds: { ...state.acpSessionIds, ...remote.acpSessionIds },
         appDataDirs: { ...state.appDataDirs, ...remote.appDataDirs },
-        threadAgents: { ...state.threadAgents, ...remote.threadAgents },
       };
       persistPrefs();
       emit();
@@ -423,9 +401,6 @@ export const acpStore = {
     const nextAppDataDirs = snapshot.appDataDir
       ? { ...state.appDataDirs, [threadId]: snapshot.appDataDir }
       : state.appDataDirs;
-    const nextThreadAgents = snapshot.agent
-      ? { ...state.threadAgents, [threadId]: snapshot.agent }
-      : state.threadAgents;
     let folders = state.folders;
     let activeFolderId = state.activeFolderId;
     let hasInitializedDefaultFolder = state.hasInitializedDefaultFolder;
@@ -452,7 +427,6 @@ export const acpStore = {
       snapshots: { ...state.snapshots, [threadId]: snapshot },
       acpSessionIds: nextMap,
       appDataDirs: nextAppDataDirs,
-      threadAgents: nextThreadAgents,
     };
     persistPrefs();
     scheduleWorkspaceSync();
@@ -543,25 +517,9 @@ export const acpStore = {
     preferredMode?: string;
     preferredModel?: string;
     preferredThoughtLevel?: string;
-    preferredAgent?: AcpAgentId;
   }): void {
     state = { ...state, ...patch };
     persistPrefs();
-    emit();
-  },
-
-  setThreadAgent(threadId: string, agent: AcpAgentId): void {
-    const nextThreadAgents = { ...state.threadAgents, [threadId]: agent };
-    const nextAcpSessionIds = { ...state.acpSessionIds };
-    delete nextAcpSessionIds[threadId];
-    state = {
-      ...state,
-      preferredAgent: agent,
-      threadAgents: nextThreadAgents,
-      acpSessionIds: nextAcpSessionIds,
-    };
-    persistPrefs();
-    scheduleWorkspaceSync();
     emit();
   },
 
@@ -946,26 +904,6 @@ export function selectEffectiveSnapshot(
   }
   const folderBootstrap = getBootstrapThreadKey(state.activeFolderId);
   return state.snapshots[folderBootstrap] ?? state.snapshots.bootstrap;
-}
-
-/** Resolves the active coding agent (`agy` or `quartz`) for the given thread or bootstrap context. */
-export function selectEffectiveAgent(
-  state: AcpClientState,
-  selectedThreadId: string | null | undefined,
-): AcpAgentId {
-  if (selectedThreadId) {
-    return (
-      state.threadAgents[selectedThreadId] ??
-      state.snapshots[selectedThreadId]?.agent ??
-      state.preferredAgent
-    );
-  }
-  const folderBootstrap = getBootstrapThreadKey(state.activeFolderId);
-  return (
-    state.threadAgents[folderBootstrap] ??
-    state.snapshots[folderBootstrap]?.agent ??
-    state.preferredAgent
-  );
 }
 
 /** Resolves whether OpenUI generative UI rendering is enabled for the given thread or bootstrap context. */

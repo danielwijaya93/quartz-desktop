@@ -11,7 +11,6 @@ import type {
 import {
   acpStore,
   getBootstrapThreadKey,
-  selectEffectiveAgent,
   selectEffectiveOpenUI,
   useAcpStore,
 } from "@/lib/client/acp-store";
@@ -201,7 +200,6 @@ function McpManagerDialog({ open, onClose }: { open: boolean; onClose: () => voi
         body: JSON.stringify({
           action: "updateWorkspace",
           threadId: threadKey,
-          agent: selectEffectiveAgent(currentState, selectedThreadId),
           openuiEnabled: selectEffectiveOpenUI(currentState, selectedThreadId),
           cwd: currentState.cwd || undefined,
           additionalDirectories: currentState.additionalDirectories,

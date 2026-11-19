@@ -15,7 +15,7 @@ import {
   getOrCreateAcpSession,
 } from "@/lib/acp/session-manager";
 import { createAcpStreamTranslator } from "@/lib/acp/sse-translator";
-import type { AcpAgentId, AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
+import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
 import { executeWorkspaceShell, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import {
   buildShellResultOpenUILang,
@@ -46,7 +46,6 @@ interface ChatRequestBody {
   threadId?: string;
   runId?: string;
   messages?: IncomingMessage[];
-  agent?: AcpAgentId;
   openuiEnabled?: boolean;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
@@ -215,7 +214,6 @@ export async function POST(req: NextRequest) {
   try {
     sessionEntry = await getOrCreateAcpSession({
       threadId,
-      agent: body.agent,
       openuiEnabled: body.openuiEnabled,
       acpSessionId: body.acpSessionId,
       appDataDir: body.appDataDir,
@@ -231,7 +229,6 @@ export async function POST(req: NextRequest) {
       try {
         sessionEntry = await getOrCreateAcpSession({
           threadId,
-          agent: body.agent,
           openuiEnabled: body.openuiEnabled,
           cwd,
           additionalDirectories: body.additionalDirectories,

@@ -31,7 +31,11 @@ dialog::backdrop {
   z-index: 10;
 }
 
-div:has(> .openui-agent-container--mobile) .antigravity-desktop-import {
+.antigravity-no-scrollbar {
+  scrollbar-width: none;
+}
+
+.antigravity-no-scrollbar::-webkit-scrollbar {
   display: none;
 }
 
@@ -78,5 +82,59 @@ div:has(> .openui-agent-container--mobile) .antigravity-desktop-import {
     margin: 0;
     left: var(--ag-popover-left, 16px);
     bottom: var(--ag-popover-bottom, 72px);
+  }
+}
+
+@supports (appearance: base-select) {
+  .antigravity-mode-select,
+  .antigravity-mode-select::picker(select) {
+    appearance: base-select;
+  }
+
+  .antigravity-mode-select {
+    align-items: center;
+    padding-right: 0;
+  }
+
+  .antigravity-mode-select::picker-icon {
+    display: none;
+  }
+
+  .antigravity-mode-select::picker(select) {
+    margin: 6px 0;
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid rgb(0 0 0 / 0.14);
+    background-color: #ffffff;
+    color: #18181b;
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+    font-size: 12px;
+  }
+
+  [data-openui-theme="dark"] .antigravity-mode-select::picker(select) {
+    border-color: rgb(255 255 255 / 0.15);
+    background-color: #18181b;
+    color: #f4f4f5;
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  }
+
+  .antigravity-mode-select option {
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    gap: 8px;
+  }
+
+  .antigravity-mode-select option:hover {
+    background-color: rgb(0 0 0 / 0.06);
+  }
+
+  [data-openui-theme="dark"] .antigravity-mode-select option:hover {
+    background-color: rgb(255 255 255 / 0.1);
+  }
+
+  .antigravity-mode-select option::checkmark {
+    opacity: 0.8;
+    font-size: 11px;
   }
 }

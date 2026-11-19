@@ -93,12 +93,9 @@ export interface AcpSessionMcpServer {
 
 export type AcpAppDataDir = "antigravity-cli" | "antigravity";
 
-export type AcpAgentId = "agy" | "quartz";
-
 export interface AcpSessionSnapshot {
   threadId: string;
   sessionId: string;
-  agent?: AcpAgentId;
   appDataDir?: AcpAppDataDir;
   cwd: string;
   additionalDirectories: string[];

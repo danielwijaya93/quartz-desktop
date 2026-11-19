@@ -44,7 +44,6 @@ export function FolderSidebar() {
   const activeFolderId = useAcpStore((s) => s.activeFolderId);
   const threadFolderMap = useAcpStore((s) => s.threadFolderMap);
   const hiddenThreadIds = useAcpStore((s) => s.hiddenThreadIds);
-  const threadAgents = useAcpStore((s) => s.threadAgents);
   const hydrated = useAcpStore((s) => s.hydrated);
 
   const [hasRequestedThreads, setHasRequestedThreads] = useState(false);
@@ -142,7 +141,7 @@ export function FolderSidebar() {
             onClick={() => acpStore.setActiveModal("add-folder")}
             aria-label="Add workspace folder"
             title="Add workspace folder"
-            className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium opacity-65 transition-colors hover:bg-black/[0.06] hover:opacity-100 dark:hover:bg-white/[0.08]"
+            className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium opacity-65 transition-colors hover:bg-black/[0.06] hover:opacity-100 dark:hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             <span>Add</span>
@@ -189,7 +188,7 @@ export function FolderSidebar() {
                       aria-expanded={isExpanded}
                       aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}`}
                       onClick={() => acpStore.toggleFolderCollapsed(folder.id)}
-                      className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded opacity-55 hover:opacity-100"
+                      className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded opacity-55 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
                     >
                       <ChevronRight
                         className={`h-3.5 w-3.5 motion-safe:transition-transform ${
@@ -203,7 +202,7 @@ export function FolderSidebar() {
                       type="button"
                       title={`${folder.name} (${folder.cwd})`}
                       onClick={() => acpStore.selectFolder(folder.id, { expand: true })}
-                      className={`flex min-h-[26px] flex-1 min-w-0 items-center gap-1.5 rounded px-1 text-left text-[13px] transition-opacity ${
+                      className={`flex min-h-[26px] flex-1 min-w-0 items-center gap-1.5 rounded px-1 text-left text-[13px] transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer ${
                         isActive
                           ? "font-semibold opacity-100"
                           : folderThreads.length > 0
@@ -225,7 +224,7 @@ export function FolderSidebar() {
                         aria-label={`New thread in ${folder.name}`}
                         title={`New chat in ${folder.name}`}
                         onClick={() => handleNewThreadInFolder(folder)}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-75 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-75 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
                       >
                         <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                       </button>
@@ -235,7 +234,7 @@ export function FolderSidebar() {
                         aria-label={`Remove folder ${folder.name} from sidebar`}
                         title={`Hide ${folder.name}`}
                         onClick={() => handleRemoveFolder(folder, folderThreads)}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-70 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-70 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
                       >
                         <Trash2 className="h-3 w-3" aria-hidden="true" />
                       </button>
@@ -249,7 +248,6 @@ export function FolderSidebar() {
                         const isRenaming = renamingThreadId === thread.id;
                         const isLast = idx === folderThreads.length - 1;
                         const ageLabel = formatShortAge(thread.createdAt);
-                        const isQuartz = threadAgents[thread.id] === "quartz";
 
                         return (
                           <li key={thread.id} className="relative pl-4">
@@ -310,18 +308,13 @@ export function FolderSidebar() {
                                       nav.navigate(undefined);
                                     }
                                   }}
-                                  className="flex min-h-[24px] flex-1 min-w-0 items-center text-left text-[12.5px] leading-snug"
+                                  className="flex min-h-[24px] flex-1 min-w-0 items-center rounded text-left text-[12.5px] leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
                                 >
                                   <span className="truncate">{thread.title}</span>
                                 </button>
 
-                                {(isQuartz || ageLabel) && (
-                                  <span className="flex shrink-0 items-center gap-1 text-[10px] tabular-nums opacity-45 group-hover/thread:hidden group-focus-within/thread:hidden">
-                                    {isQuartz && (
-                                      <span className="rounded bg-black/[0.06] dark:bg-white/[0.1] px-1 py-px font-mono text-[9px] uppercase">
-                                        q
-                                      </span>
-                                    )}
+                                {ageLabel && (
+                                  <span className="shrink-0 text-[10px] tabular-nums opacity-45 group-hover/thread:hidden group-focus-within/thread:hidden">
                                     {ageLabel}
                                   </span>
                                 )}
@@ -335,7 +328,7 @@ export function FolderSidebar() {
                                       setRenamingThreadId(thread.id);
                                       setRenameDraft(thread.title);
                                     }}
-                                    className="inline-flex h-5 w-5 items-center justify-center rounded opacity-70 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100"
+                                    className="inline-flex h-5 w-5 items-center justify-center rounded opacity-70 hover:bg-black/10 dark:hover:bg-white/15 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
                                   >
                                     <Pencil className="h-3 w-3" aria-hidden="true" />
                                   </button>
@@ -345,7 +338,7 @@ export function FolderSidebar() {
                                     aria-label={`Remove thread ${thread.title} from sidebar`}
                                     title="Remove from sidebar"
                                     onClick={() => handleRemoveThreadFromSidebar(thread.id)}
-                                    className="inline-flex h-5 w-5 items-center justify-center rounded opacity-70 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100"
+                                    className="inline-flex h-5 w-5 items-center justify-center rounded opacity-70 hover:bg-red-500/15 hover:text-red-600 dark:hover:text-red-400 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/25 dark:focus-visible:ring-white/30 cursor-pointer"
                                   >
                                     <X className="h-3 w-3" aria-hidden="true" />
                                   </button>

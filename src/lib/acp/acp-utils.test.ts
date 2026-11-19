@@ -209,27 +209,15 @@ describe("detectSessionAppDataDir", () => {
     expect(resolveAcpAdditionalDirs([promptsDir], home)).toEqual([promptsDir]);
   });
 
-  it("builds spawn specs for agy and quartz ACP agents", () => {
+  it("builds spawn spec for agy ACP agent", () => {
     expect(
       buildAgentSpawnSpec({
-        agent: "agy",
         additionalDirectories: ["/tmp/extra"],
         appDataDir: "antigravity",
       }),
     ).toEqual({
       command: "agy",
       args: ["acp", "--disable-telemetry", "--app-data-dir", "antigravity", "--add-dir", "/tmp/extra"],
-    });
-
-    expect(
-      buildAgentSpawnSpec({
-        agent: "quartz",
-        additionalDirectories: ["/tmp/extra"],
-        appDataDir: "antigravity",
-      }),
-    ).toEqual({
-      command: "quartz",
-      args: ["acp"],
     });
   });
 });

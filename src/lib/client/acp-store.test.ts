@@ -4,7 +4,6 @@ import {
   getBootstrapThreadKey,
   getMergedSlashCommands,
   partitionThreadsByFolder,
-  selectEffectiveAgent,
   selectEffectiveOpenUI,
   selectEffectiveSnapshot,
   type AcpClientState,
@@ -43,11 +42,9 @@ function makeState(
     preferredMode: "auto",
     preferredModel: "",
     preferredThoughtLevel: "",
-    preferredAgent: "agy",
     snapshots,
     acpSessionIds: {},
     appDataDirs: {},
-    threadAgents: {},
     threadOpenUI: {},
     pendingAutoTitleIds: [],
     autoTitledThreadIds: [],
@@ -228,14 +225,6 @@ describe("acpStore hydration and folder lifecycle", () => {
 
     acpStore.setSnapshot("thread-app", makeSnapshot("thread-app", { appDataDir: "antigravity" }));
     expect(acpStore.getState().appDataDirs["thread-app"]).toBe("antigravity");
-
-    // Per-thread agent binding & fallback
-    acpStore.setThreadAgent("thread-q", "quartz");
-    expect(selectEffectiveAgent(acpStore.getState(), "thread-q")).toBe("quartz");
-    expect(acpStore.getState().preferredAgent).toBe("quartz");
-    acpStore.setPreferences({ preferredAgent: "agy" });
-    expect(selectEffectiveAgent(acpStore.getState(), "thread-q")).toBe("quartz");
-    expect(selectEffectiveAgent(acpStore.getState(), "thread-new")).toBe("agy");
 
     // Per-thread OpenUI toggle defaults to true and resets bootstrap on promote
     expect(selectEffectiveOpenUI(acpStore.getState(), "thread-new")).toBe(true);

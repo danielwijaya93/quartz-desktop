@@ -93,7 +93,6 @@ export function ThreadSyncManager() {
         hiddenThreadIds: store.hiddenThreadIds,
         acpSessionIds: store.acpSessionIds,
         appDataDirs: store.appDataDirs,
-        threadAgents: store.threadAgents,
         messagesByThread,
       });
 

@@ -1,4 +1,4 @@
-import type { AcpAgentId, AcpAppDataDir, WorkspaceFolder } from "@/lib/acp/types";
+import type { AcpAppDataDir, WorkspaceFolder } from "@/lib/acp/types";
 import {
   existsSync,
   mkdirSync,
@@ -31,7 +31,6 @@ export interface SyncedState {
   hiddenThreadIds: string[];
   acpSessionIds: Record<string, string>;
   appDataDirs: Record<string, AcpAppDataDir>;
-  threadAgents: Record<string, AcpAgentId>;
 }
 
 export interface SyncChangeEvent {
@@ -92,7 +91,6 @@ function emptyState(): SyncedState {
     hiddenThreadIds: [],
     acpSessionIds: {},
     appDataDirs: {},
-    threadAgents: {},
   };
 }
 
@@ -129,8 +127,6 @@ function readStateSync(dataDir = getSyncDataDir()): SyncedState {
           : {},
       appDataDirs:
         parsed.appDataDirs && typeof parsed.appDataDirs === "object" ? parsed.appDataDirs : {},
-      threadAgents:
-        parsed.threadAgents && typeof parsed.threadAgents === "object" ? parsed.threadAgents : {},
     };
   } catch {
     return emptyState();
@@ -271,7 +267,6 @@ export async function updateSyncedWorkspaceState(
       | "hiddenThreadIds"
       | "acpSessionIds"
       | "appDataDirs"
-      | "threadAgents"
     >
   >,
   options?: { clientId?: string; dataDir?: string },
@@ -306,7 +301,6 @@ export async function mergeSyncedState(
     hiddenThreadIds?: string[];
     acpSessionIds?: Record<string, string>;
     appDataDirs?: Record<string, AcpAppDataDir>;
-    threadAgents?: Record<string, AcpAgentId>;
     messagesByThread?: Record<string, unknown[]>;
   },
   options?: { clientId?: string; dataDir?: string },
@@ -373,7 +367,6 @@ export async function mergeSyncedState(
     const mergedThreadFolders = { ...remappedIncomingThreadFolders, ...state.threadFolders };
     const mergedAcpSessionIds = { ...(incoming.acpSessionIds ?? {}), ...state.acpSessionIds };
     const mergedAppDataDirs = { ...(incoming.appDataDirs ?? {}), ...state.appDataDirs };
-    const mergedThreadAgents = { ...(incoming.threadAgents ?? {}), ...state.threadAgents };
     const hiddenSet = new Set<string>([
       ...state.hiddenThreadIds,
       ...(incoming.hiddenThreadIds ?? []),
@@ -420,7 +413,6 @@ export async function mergeSyncedState(
       hiddenThreadIds: mergedHidden,
       acpSessionIds: mergedAcpSessionIds,
       appDataDirs: mergedAppDataDirs,
-      threadAgents: mergedThreadAgents,
     };
     atomicWriteJson(getStateFilePath(dataDir), nextState);
     notifyListeners({
