@@ -107,7 +107,8 @@ export function ThreadRunRecovery() {
             (m) =>
               m.role === "tool" &&
               typeof m.content === "string" &&
-              m.content.includes("Tool is running as a background task"),
+              (m.content.includes("Tool is running as a background task") ||
+                m.content.trimStart().startsWith('{"CommandLine":')),
           );
 
         if (lastMsg.role !== "user" && !hasPendingBgTaskInTurn) return;

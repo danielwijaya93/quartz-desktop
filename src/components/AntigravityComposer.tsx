@@ -5,6 +5,7 @@ import {
   ComposerContextUsageBadge,
 } from "@/components/ComposerControls";
 import {
+  BackgroundTasksStrip,
   PendingPermissionsBanner,
   PlanProgressStrip,
 } from "@/components/ComposerOverlays";
@@ -110,6 +111,7 @@ export function AntigravityComposer({
     [snapshot],
   );
   const planEntries = snapshot?.plan ?? [];
+  const backgroundTasks = snapshot?.backgroundTasks ?? [];
 
   const [caret, setCaret] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -522,6 +524,8 @@ export function AntigravityComposer({
 
   return (
     <div className="openui-agent-composer-slot flex flex-col gap-2">
+      <BackgroundTasksStrip tasks={backgroundTasks} />
+
       <PlanProgressStrip planEntries={planEntries} />
 
       <PendingPermissionsBanner

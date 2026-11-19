@@ -1,7 +1,66 @@
 "use client";
 
-import type { AcpPlanEntry, PendingPermissionRequest } from "@/lib/acp/types";
-import { Check, ShieldAlert, X } from "lucide-react";
+import type { AcpBackgroundTask, AcpPlanEntry, PendingPermissionRequest } from "@/lib/acp/types";
+import { Check, Loader2, ShieldAlert, X } from "lucide-react";
+import { useEffect, useState } from "react";
+
+function formatElapsed(startedAt: number, now: number): string {
+  const sec = Math.max(0, Math.floor((now - startedAt) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  return `${min}m ${rem}s`;
+}
+
+/** Renders active background tasks (e.g. long-running commands/subagents) above the composer. */
+export function BackgroundTasksStrip({ tasks }: { tasks: AcpBackgroundTask[] }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (tasks.length === 0) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [tasks.length]);
+
+  if (tasks.length === 0) return null;
+
+  return (
+    <div className="mx-auto w-full max-w-[760px] px-4">
+      <div
+        role="status"
+        aria-live="polite"
+        className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-xs"
+      >
+        <div className="mb-1 flex items-center justify-between font-medium opacity-85">
+          <span className="flex items-center gap-1.5">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" aria-hidden="true" />
+            <span>{tasks.length === 1 ? "Background Task Running" : "Background Tasks Running"}</span>
+          </span>
+          <span className="tabular-nums opacity-65">{tasks.length}</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {tasks.map((task) => (
+            <span
+              key={task.id}
+              title={task.label}
+              className="inline-flex items-center gap-1.5 rounded-md border border-black/10 dark:border-white/10 bg-white/60 dark:bg-zinc-900/60 px-2 py-0.5"
+            >
+              <span
+                aria-hidden="true"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 motion-safe:animate-pulse"
+              />
+              <span className="max-w-[260px] truncate font-mono text-[11px]">{task.label}</span>
+              <span className="shrink-0 tabular-nums text-[10px] opacity-55">
+                {formatElapsed(task.startedAt, now)}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Renders the live ACP execution plan progress strip above the composer. */
 export function PlanProgressStrip({ planEntries }: { planEntries: AcpPlanEntry[] }) {

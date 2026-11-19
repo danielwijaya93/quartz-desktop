@@ -1,6 +1,30 @@
 import { extractAcpToolOutput } from "@/lib/acp/replay";
+import type { AcpBackgroundTask } from "@/lib/acp/types";
 import type * as acp from "@agentclientprotocol/sdk";
 import { EventType } from "@openuidev/react-headless";
+
+function formatBackgroundTaskLabel(name: string, lastArgs: string, title?: string): string {
+  if (lastArgs) {
+    try {
+      const parsed = JSON.parse(lastArgs) as Record<string, unknown>;
+      if (typeof parsed.toolSummary === "string" && parsed.toolSummary.trim()) {
+        return parsed.toolSummary.trim();
+      }
+      if (typeof parsed.CommandLine === "string" && parsed.CommandLine.trim()) {
+        return parsed.CommandLine.trim();
+      }
+      if (typeof parsed.Description === "string" && parsed.Description.trim()) {
+        return parsed.Description.trim();
+      }
+      if (typeof parsed.Role === "string" && parsed.Role.trim()) {
+        return parsed.Role.trim();
+      }
+    } catch {
+      // ignore partial JSON
+    }
+  }
+  return title?.trim() || name;
+}
 
 export interface AcpStreamTranslator {
   onUpdate: (update: acp.SessionUpdate) => void;
@@ -10,6 +34,8 @@ export interface AcpStreamTranslator {
   hasPendingBackgroundTask: () => boolean;
   clearPendingBackgroundTask: () => void;
   hasOpenTools: () => boolean;
+  hasOpenBackgroundTools: (excludeIds?: Set<string>) => boolean;
+  getOpenBackgroundTasks: () => AcpBackgroundTask[];
   getToolArgs: (toolCallId: string) => string | undefined;
 }
 
@@ -27,9 +53,18 @@ export function createAcpStreamTranslator(
   let thinkingStarted = false;
   let thinkingText = "";
   let activeParentMsgId: string | undefined;
+  const explicitBgTasks = new Map<string, AcpBackgroundTask>();
   const toolState = new Map<
     string,
-    { started: boolean; ended: boolean; resultSent: boolean; name: string; lastArgs: string }
+    {
+      started: boolean;
+      ended: boolean;
+      resultSent: boolean;
+      name: string;
+      title?: string;
+      lastArgs: string;
+      startedAt: number;
+    }
   >();
 
   const closeThinking = () => {
@@ -88,8 +123,18 @@ export function createAcpStreamTranslator(
           : update.title || "tool";
       let st = toolState.get(id);
       if (!st) {
-        st = { started: false, ended: false, resultSent: false, name: tcName, lastArgs: "" };
+        st = {
+          started: false,
+          ended: false,
+          resultSent: false,
+          name: tcName,
+          title: update.title ?? undefined,
+          lastArgs: "",
+          startedAt: Date.now(),
+        };
         toolState.set(id, st);
+      } else if (update.title && !st.title) {
+        st.title = update.title;
       }
 
       if (!st.started) {
@@ -131,6 +176,12 @@ export function createAcpStreamTranslator(
           const outputText = extractAcpToolOutput(update);
           if (outputText.includes("Tool is running as a background task")) {
             pendingBackgroundTask = true;
+            explicitBgTasks.set(id, {
+              id,
+              name: st.name,
+              label: formatBackgroundTaskLabel(st.name, st.lastArgs, st.title),
+              startedAt: st.startedAt,
+            });
           }
           emit({
             type: EventType.TOOL_CALL_RESULT,
@@ -205,6 +256,28 @@ export function createAcpStreamTranslator(
       pendingBackgroundTask = false;
     },
     hasOpenTools: () => Array.from(toolState.values()).some((st) => st.started && !st.ended),
+    hasOpenBackgroundTools: (excludeIds?: Set<string>) =>
+      Array.from(toolState.entries()).some(
+        ([id, st]) =>
+          st.started &&
+          !st.ended &&
+          st.name !== "ask_question" &&
+          !(excludeIds && excludeIds.has(id)),
+      ),
+    getOpenBackgroundTasks: () => {
+      const byId = new Map<string, AcpBackgroundTask>(explicitBgTasks);
+      for (const [id, st] of toolState) {
+        if (st.started && !st.ended && st.name !== "ask_question") {
+          byId.set(id, {
+            id,
+            name: st.name,
+            label: formatBackgroundTaskLabel(st.name, st.lastArgs, st.title),
+            startedAt: st.startedAt,
+          });
+        }
+      }
+      return Array.from(byId.values());
+    },
     getToolArgs: (toolCallId: string) => toolState.get(toolCallId)?.lastArgs,
   };
 }

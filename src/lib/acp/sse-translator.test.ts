@@ -79,10 +79,12 @@ describe("createAcpStreamTranslator", () => {
       sessionUpdate: "tool_call",
       toolCallId: "cmd-bg",
       title: "run_command",
-      rawInput: { CommandLine: "uv run pytest" },
+      rawInput: { CommandLine: "uv run pytest", toolSummary: "Run pytest suite" },
       status: "in_progress",
     } as acp.SessionUpdate);
     expect(translator.hasOpenTools()).toBe(true);
+    expect(translator.hasOpenBackgroundTools()).toBe(true);
+    expect(translator.getOpenBackgroundTasks().map((t) => t.label)).toEqual(["Run pytest suite"]);
 
     translator.onUpdate({
       sessionUpdate: "tool_call_update",
@@ -91,7 +93,9 @@ describe("createAcpStreamTranslator", () => {
       rawOutput: "Tool is running as a background task with task id: abc/task-1",
     } as acp.SessionUpdate);
     expect(translator.hasOpenTools()).toBe(false);
+    expect(translator.hasOpenBackgroundTools()).toBe(false);
     expect(translator.hasPendingBackgroundTask()).toBe(true);
+    expect(translator.getOpenBackgroundTasks().map((t) => t.label)).toEqual(["Run pytest suite"]);
 
     translator.clearPendingBackgroundTask();
     expect(translator.hasPendingBackgroundTask()).toBe(false);

@@ -367,12 +367,25 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (resp.stopReason !== "cancelled" && translator.hasPendingBackgroundTask()) {
+      if (
+        resp.stopReason !== "cancelled" &&
+        (translator.hasPendingBackgroundTask() || translator.hasOpenBackgroundTools())
+      ) {
+        const initialBgTasks = translator.getOpenBackgroundTasks();
+        const initialBgIds = new Set(initialBgTasks.map((t) => t.id));
+        emit({
+          type: EventType.CUSTOM,
+          name: "acp",
+          value: { type: "background_tasks", tasks: initialBgTasks },
+        });
+
         await new Promise<void>((resolveWait) => {
           const IDLE_SETTLE_MS = 1800;
           const MAX_WAIT_MS = 5 * 60 * 1000;
           let settleTimer: ReturnType<typeof setTimeout> | null = null;
           let maxTimer: ReturnType<typeof setTimeout> | null = null;
+          let sawWakeupActivity = false;
+          let lastTasksKey = JSON.stringify(initialBgTasks.map((t) => t.id));
           let done = false;
 
           const finishWait = () => {
@@ -385,17 +398,26 @@ export async function POST(req: NextRequest) {
             sessionEntry.activeCustomListener = (payload) => {
               emit({ type: EventType.CUSTOM, name: "acp", value: payload });
             };
+            emit({
+              type: EventType.CUSTOM,
+              name: "acp",
+              value: { type: "background_tasks", tasks: [] },
+            });
             resolveWait();
           };
 
           const armSettle = (delayMs: number) => {
+            if (!sawWakeupActivity) return;
             if (settleTimer) clearTimeout(settleTimer);
             settleTimer = setTimeout(() => {
               if (translator.hasPendingBackgroundTask()) {
                 translator.clearPendingBackgroundTask();
                 return;
               }
-              if (!translator.hasOpenTools() && sessionEntry.pendingPermissions.size === 0) {
+              if (
+                !translator.hasOpenBackgroundTools(initialBgIds) &&
+                sessionEntry.pendingPermissions.size === 0
+              ) {
                 finishWait();
               }
             }, delayMs);
@@ -409,8 +431,20 @@ export async function POST(req: NextRequest) {
 
           sessionEntry.activeUpdateListener = (update) => {
             translator.onUpdate(update);
+            sawWakeupActivity = true;
             if (maxTimer) clearTimeout(maxTimer);
             maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
+
+            const currentTasks = translator.getOpenBackgroundTasks();
+            const nextKey = JSON.stringify(currentTasks.map((t) => t.id));
+            if (nextKey !== lastTasksKey) {
+              lastTasksKey = nextKey;
+              emit({
+                type: EventType.CUSTOM,
+                name: "acp",
+                value: { type: "background_tasks", tasks: currentTasks },
+              });
+            }
 
             if (translator.hasPendingBackgroundTask()) {
               if (settleTimer) {
@@ -419,7 +453,10 @@ export async function POST(req: NextRequest) {
               }
               return;
             }
-            if (!translator.hasOpenTools() && sessionEntry.pendingPermissions.size === 0) {
+            if (
+              !translator.hasOpenBackgroundTools(initialBgIds) &&
+              sessionEntry.pendingPermissions.size === 0
+            ) {
               armSettle(IDLE_SETTLE_MS);
             } else if (settleTimer) {
               clearTimeout(settleTimer);
@@ -431,7 +468,12 @@ export async function POST(req: NextRequest) {
             emit({ type: EventType.CUSTOM, name: "acp", value: payload });
             if (payload.type === "usage") {
               translator.closeCurrentTextMessage();
-              if (!translator.hasPendingBackgroundTask() && !translator.hasOpenTools()) {
+              if (
+                sawWakeupActivity &&
+                !translator.hasPendingBackgroundTask() &&
+                !translator.hasOpenBackgroundTools(initialBgIds) &&
+                sessionEntry.pendingPermissions.size === 0
+              ) {
                 armSettle(400);
               }
             }

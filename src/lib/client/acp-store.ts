@@ -512,6 +512,9 @@ export const acpStore = {
           ),
         };
         break;
+      case "background_tasks":
+        next = { ...prev, backgroundTasks: payload.tasks };
+        break;
     }
 
     let nextThreadStatus = state.threadStatus;
@@ -605,8 +608,11 @@ export const acpStore = {
     if (!threadId) return;
     const prevSnap = state.snapshots[threadId];
     const nextSnapshots =
-      prevSnap && prevSnap.isStreaming
-        ? { ...state.snapshots, [threadId]: { ...prevSnap, isStreaming: false } }
+      prevSnap && (prevSnap.isStreaming || (prevSnap.backgroundTasks?.length ?? 0) > 0)
+        ? {
+            ...state.snapshots,
+            [threadId]: { ...prevSnap, isStreaming: false, backgroundTasks: [] },
+          }
         : state.snapshots;
 
     const nextStatus: ThreadActivityStatus = options?.needsInput ? "needs_input" : "unread";

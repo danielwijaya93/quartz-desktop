@@ -93,6 +93,13 @@ export interface AcpSessionMcpServer {
 
 export type AcpAppDataDir = "antigravity-cli" | "antigravity";
 
+export interface AcpBackgroundTask {
+  id: string;
+  name: string;
+  label: string;
+  startedAt: number;
+}
+
 export interface AcpSessionSnapshot {
   threadId: string;
   sessionId: string;
@@ -114,6 +121,7 @@ export interface AcpSessionSnapshot {
   tier?: AcpTierInfo;
   plan: AcpPlanEntry[];
   pendingPermissions: PendingPermissionRequest[];
+  backgroundTasks?: AcpBackgroundTask[];
   isStreaming: boolean;
 }
 
@@ -173,4 +181,5 @@ export type AcpCustomEventPayload =
   | { type: "session_info"; title?: string | null }
   | { type: "plan"; entries: AcpPlanEntry[] }
   | { type: "permission_request"; permission: PendingPermissionRequest }
-  | { type: "permission_resolved"; requestId: string };
+  | { type: "permission_resolved"; requestId: string }
+  | { type: "background_tasks"; tasks: AcpBackgroundTask[] };
