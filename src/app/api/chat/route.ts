@@ -14,7 +14,10 @@ import {
   getExistingAcpSession,
   getOrCreateAcpSession,
 } from "@/lib/acp/session-manager";
-import { createAcpStreamTranslator } from "@/lib/acp/sse-translator";
+import {
+  createAcpStreamTranslator,
+  isAgyMalformedToolCallNotice,
+} from "@/lib/acp/sse-translator";
 import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
 import { executeWorkspaceShell, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import {
@@ -342,143 +345,181 @@ export async function POST(req: NextRequest) {
   void (async () => {
     let tempAttachmentDir: string | null = null;
     try {
-      let resp;
-      try {
-        resp = await sessionEntry.connection.agent.request(
-          acp.AGENT_METHODS.session_prompt,
-          {
-            sessionId: sessionEntry.sessionId,
-            prompt: promptBlocks,
-          },
-        );
-      } catch (promptErr) {
-        if (!hasBinaryBlobs || req.signal.aborted) {
-          throw promptErr;
+      const MAX_MALFORMED_RETRIES = 2;
+      let resp: acp.PromptResponse;
+      let retryCount = 0;
+      let activePromptBlocks = promptBlocks;
+
+      while (true) {
+        try {
+          resp = await sessionEntry.connection.agent.request(
+            acp.AGENT_METHODS.session_prompt,
+            {
+              sessionId: sessionEntry.sessionId,
+              prompt: activePromptBlocks,
+            },
+          );
+        } catch (promptErr) {
+          if (retryCount > 0 || !hasBinaryBlobs || req.signal.aborted) {
+            throw promptErr;
+          }
+          // Fallback for binary files (e.g. PDFs) if agent rejects inline BlobResourceContents
+          const fallback = await buildFallbackBlocksWithTempFiles(fileAttachments);
+          tempAttachmentDir = fallback.tempDir;
+          resp = await sessionEntry.connection.agent.request(
+            acp.AGENT_METHODS.session_prompt,
+            {
+              sessionId: sessionEntry.sessionId,
+              prompt: buildPromptBlocks(fallback.blocks),
+            },
+          );
         }
-        // Fallback for binary files (e.g. PDFs) if agent rejects inline BlobResourceContents
-        const fallback = await buildFallbackBlocksWithTempFiles(fileAttachments);
-        tempAttachmentDir = fallback.tempDir;
-        resp = await sessionEntry.connection.agent.request(
-          acp.AGENT_METHODS.session_prompt,
-          {
-            sessionId: sessionEntry.sessionId,
-            prompt: buildPromptBlocks(fallback.blocks),
-          },
-        );
-      }
 
-      if (
-        resp.stopReason !== "cancelled" &&
-        (translator.hasPendingBackgroundTask() || translator.hasOpenBackgroundTools())
-      ) {
-        const initialBgTasks = translator.getOpenBackgroundTasks();
-        const initialBgIds = new Set(initialBgTasks.map((t) => t.id));
-        emit({
-          type: EventType.CUSTOM,
-          name: "acp",
-          value: { type: "background_tasks", tasks: initialBgTasks },
-        });
+        if (
+          resp.stopReason !== "cancelled" &&
+          (translator.hasPendingBackgroundTask() || translator.hasOpenBackgroundTools())
+        ) {
+          const initialBgTasks = translator.getOpenBackgroundTasks();
+          const initialBgIds = new Set(initialBgTasks.map((t) => t.id));
+          emit({
+            type: EventType.CUSTOM,
+            name: "acp",
+            value: { type: "background_tasks", tasks: initialBgTasks },
+          });
 
-        await new Promise<void>((resolveWait) => {
-          const IDLE_SETTLE_MS = 1800;
-          const MAX_WAIT_MS = 5 * 60 * 1000;
-          let settleTimer: ReturnType<typeof setTimeout> | null = null;
-          let maxTimer: ReturnType<typeof setTimeout> | null = null;
-          let sawWakeupActivity = false;
-          let lastTasksKey = JSON.stringify(initialBgTasks.map((t) => t.id));
-          let done = false;
+          await new Promise<void>((resolveWait) => {
+            const IDLE_SETTLE_MS = 1800;
+            const MAX_WAIT_MS = 5 * 60 * 1000;
+            let settleTimer: ReturnType<typeof setTimeout> | null = null;
+            let maxTimer: ReturnType<typeof setTimeout> | null = null;
+            let sawWakeupActivity = false;
+            let lastTasksKey = JSON.stringify(initialBgTasks.map((t) => t.id));
+            let done = false;
 
-          const finishWait = () => {
-            if (done) return;
-            done = true;
-            if (settleTimer) clearTimeout(settleTimer);
-            if (maxTimer) clearTimeout(maxTimer);
-            sessionEntry.onCancelTurn = undefined;
-            sessionEntry.activeUpdateListener = translator.onUpdate;
-            sessionEntry.activeCustomListener = (payload) => {
-              emit({ type: EventType.CUSTOM, name: "acp", value: payload });
+            const finishWait = () => {
+              if (done) return;
+              done = true;
+              if (settleTimer) clearTimeout(settleTimer);
+              if (maxTimer) clearTimeout(maxTimer);
+              sessionEntry.onCancelTurn = undefined;
+              sessionEntry.activeUpdateListener = translator.onUpdate;
+              sessionEntry.activeCustomListener = (payload) => {
+                emit({ type: EventType.CUSTOM, name: "acp", value: payload });
+              };
+              emit({
+                type: EventType.CUSTOM,
+                name: "acp",
+                value: { type: "background_tasks", tasks: [] },
+              });
+              resolveWait();
             };
-            emit({
-              type: EventType.CUSTOM,
-              name: "acp",
-              value: { type: "background_tasks", tasks: [] },
-            });
-            resolveWait();
-          };
 
-          const armSettle = (delayMs: number) => {
-            if (!sawWakeupActivity) return;
-            if (settleTimer) clearTimeout(settleTimer);
-            settleTimer = setTimeout(() => {
+            const armSettle = (delayMs: number) => {
+              if (!sawWakeupActivity) return;
+              if (settleTimer) clearTimeout(settleTimer);
+              settleTimer = setTimeout(() => {
+                if (translator.hasPendingBackgroundTask()) {
+                  translator.clearPendingBackgroundTask();
+                  return;
+                }
+                if (
+                  !translator.hasOpenBackgroundTools(initialBgIds) &&
+                  sessionEntry.pendingPermissions.size === 0
+                ) {
+                  finishWait();
+                }
+              }, delayMs);
+            };
+
+            // Clear the initial turn's flag and close its text message so wakeup output starts cleanly
+            translator.closeCurrentTextMessage();
+            translator.clearPendingBackgroundTask();
+            maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
+            sessionEntry.onCancelTurn = finishWait;
+
+            sessionEntry.activeUpdateListener = (update) => {
+              translator.onUpdate(update);
+              sawWakeupActivity = true;
+              if (maxTimer) clearTimeout(maxTimer);
+              maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
+
+              const currentTasks = translator.getOpenBackgroundTasks();
+              const nextKey = JSON.stringify(currentTasks.map((t) => t.id));
+              if (nextKey !== lastTasksKey) {
+                lastTasksKey = nextKey;
+                emit({
+                  type: EventType.CUSTOM,
+                  name: "acp",
+                  value: { type: "background_tasks", tasks: currentTasks },
+                });
+              }
+
               if (translator.hasPendingBackgroundTask()) {
-                translator.clearPendingBackgroundTask();
+                if (settleTimer) {
+                  clearTimeout(settleTimer);
+                  settleTimer = null;
+                }
                 return;
               }
               if (
                 !translator.hasOpenBackgroundTools(initialBgIds) &&
                 sessionEntry.pendingPermissions.size === 0
               ) {
-                finishWait();
-              }
-            }, delayMs);
-          };
-
-          // Clear the initial turn's flag and close its text message so wakeup output starts cleanly
-          translator.closeCurrentTextMessage();
-          translator.clearPendingBackgroundTask();
-          maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
-          sessionEntry.onCancelTurn = finishWait;
-
-          sessionEntry.activeUpdateListener = (update) => {
-            translator.onUpdate(update);
-            sawWakeupActivity = true;
-            if (maxTimer) clearTimeout(maxTimer);
-            maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
-
-            const currentTasks = translator.getOpenBackgroundTasks();
-            const nextKey = JSON.stringify(currentTasks.map((t) => t.id));
-            if (nextKey !== lastTasksKey) {
-              lastTasksKey = nextKey;
-              emit({
-                type: EventType.CUSTOM,
-                name: "acp",
-                value: { type: "background_tasks", tasks: currentTasks },
-              });
-            }
-
-            if (translator.hasPendingBackgroundTask()) {
-              if (settleTimer) {
+                armSettle(IDLE_SETTLE_MS);
+              } else if (settleTimer) {
                 clearTimeout(settleTimer);
                 settleTimer = null;
               }
-              return;
-            }
-            if (
-              !translator.hasOpenBackgroundTools(initialBgIds) &&
-              sessionEntry.pendingPermissions.size === 0
-            ) {
-              armSettle(IDLE_SETTLE_MS);
-            } else if (settleTimer) {
-              clearTimeout(settleTimer);
-              settleTimer = null;
-            }
-          };
+            };
 
-          sessionEntry.activeCustomListener = (payload) => {
-            emit({ type: EventType.CUSTOM, name: "acp", value: payload });
-            if (payload.type === "usage") {
-              translator.closeCurrentTextMessage();
-              if (
-                sawWakeupActivity &&
-                !translator.hasPendingBackgroundTask() &&
-                !translator.hasOpenBackgroundTools(initialBgIds) &&
-                sessionEntry.pendingPermissions.size === 0
-              ) {
-                armSettle(400);
+            sessionEntry.activeCustomListener = (payload) => {
+              emit({ type: EventType.CUSTOM, name: "acp", value: payload });
+              if (payload.type === "usage") {
+                translator.closeCurrentTextMessage();
+                if (
+                  sawWakeupActivity &&
+                  !translator.hasPendingBackgroundTask() &&
+                  !translator.hasOpenBackgroundTools(initialBgIds) &&
+                  sessionEntry.pendingPermissions.size === 0
+                ) {
+                  armSettle(400);
+                }
               }
-            }
-          };
-        });
+            };
+          });
+        }
+
+        if (
+          resp.stopReason !== "cancelled" &&
+          !req.signal.aborted &&
+          isAgyMalformedToolCallNotice(translator.getCurrentText()) &&
+          retryCount < MAX_MALFORMED_RETRIES
+        ) {
+          retryCount += 1;
+          translator.closeCurrentTextMessage();
+          activePromptBlocks = [
+            {
+              type: "text",
+              text: "Please retry with a properly formatted function call and continue.",
+            },
+          ];
+          continue;
+        }
+
+        break;
+      }
+
+      if (isAgyMalformedToolCallNotice(translator.getCurrentText())) {
+        translator.closeCurrentTextMessage();
+        const errCard = buildStatusCardOpenUILang(
+          "Function Call Retry Exhausted",
+          "The model produced malformed function calls across automatic retries. Send a follow-up message to continue.",
+          "error",
+        );
+        const errMsgId = crypto.randomUUID();
+        emit({ type: EventType.TEXT_MESSAGE_START, messageId: errMsgId, role: "assistant" });
+        emit({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: errMsgId, delta: errCard });
+        emit({ type: EventType.TEXT_MESSAGE_END, messageId: errMsgId });
       }
 
       translator.flush();

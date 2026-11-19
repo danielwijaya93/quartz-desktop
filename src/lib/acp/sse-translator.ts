@@ -26,10 +26,15 @@ function formatBackgroundTaskLabel(name: string, lastArgs: string, title?: strin
   return title?.trim() || name;
 }
 
+export function isAgyMalformedToolCallNotice(text: string): boolean {
+  return /malformed function call/i.test(text) && /retries remaining:\s*[1-9]\d*/i.test(text);
+}
+
 export interface AcpStreamTranslator {
   onUpdate: (update: acp.SessionUpdate) => void;
   flush: () => void;
   closeCurrentTextMessage: () => void;
+  getCurrentText: () => string;
   hasAssistantText: () => boolean;
   hasPendingBackgroundTask: () => boolean;
   clearPendingBackgroundTask: () => void;
@@ -250,6 +255,7 @@ export function createAcpStreamTranslator(
     onUpdate,
     flush,
     closeCurrentTextMessage: closeTextMessage,
+    getCurrentText: () => currentTextBuffer,
     hasAssistantText: () => assistantTextEmitted,
     hasPendingBackgroundTask: () => pendingBackgroundTask,
     clearPendingBackgroundTask: () => {

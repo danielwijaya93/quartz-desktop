@@ -1,5 +1,8 @@
 import { convertReplayedUpdatesToMessages } from "@/lib/acp/replay";
-import { createAcpStreamTranslator } from "@/lib/acp/sse-translator";
+import {
+  createAcpStreamTranslator,
+  isAgyMalformedToolCallNotice,
+} from "@/lib/acp/sse-translator";
 import type * as acp from "@agentclientprotocol/sdk";
 import { EventType } from "@openuidev/react-headless";
 import { describe, expect, it } from "vitest";
@@ -122,6 +125,15 @@ describe("createAcpStreamTranslator", () => {
     expect(starts).toHaveLength(2);
     expect(ends).toHaveLength(2);
     expect(starts[0]?.messageId).not.toBe(starts[1]?.messageId);
+  });
+
+  it("detects agy malformed function call retry notices", () => {
+    expect(
+      isAgyMalformedToolCallNotice(
+        "\n⚠ Your previous response contained an improperly formatted function call: Malformed function call: Failed to parse function call. Retries remaining: 3",
+      ),
+    ).toBe(true);
+    expect(isAgyMalformedToolCallNotice("All 77 tests passed.")).toBe(false);
   });
 });
 
