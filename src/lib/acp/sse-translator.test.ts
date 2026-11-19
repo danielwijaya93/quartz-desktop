@@ -69,6 +69,33 @@ describe("createAcpStreamTranslator", () => {
       events.some((e) => e.type === EventType.TOOL_CALL_RESULT && e.toolCallId === "ask-1"),
     ).toBe(true);
   });
+
+  it("tracks pending background tasks and open tool state", () => {
+    const translator = createAcpStreamTranslator(() => {});
+    expect(translator.hasPendingBackgroundTask()).toBe(false);
+    expect(translator.hasOpenTools()).toBe(false);
+
+    translator.onUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "cmd-bg",
+      title: "run_command",
+      rawInput: { CommandLine: "uv run pytest" },
+      status: "in_progress",
+    } as acp.SessionUpdate);
+    expect(translator.hasOpenTools()).toBe(true);
+
+    translator.onUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "cmd-bg",
+      status: "completed",
+      rawOutput: "Tool is running as a background task with task id: abc/task-1",
+    } as acp.SessionUpdate);
+    expect(translator.hasOpenTools()).toBe(false);
+    expect(translator.hasPendingBackgroundTask()).toBe(true);
+
+    translator.clearPendingBackgroundTask();
+    expect(translator.hasPendingBackgroundTask()).toBe(false);
+  });
 });
 
 describe("convertReplayedUpdatesToMessages", () => {

@@ -367,6 +367,74 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      if (resp.stopReason !== "cancelled" && translator.hasPendingBackgroundTask()) {
+        await new Promise<void>((resolveWait) => {
+          const IDLE_SETTLE_MS = 1800;
+          const MAX_WAIT_MS = 5 * 60 * 1000;
+          let settleTimer: ReturnType<typeof setTimeout> | null = null;
+          let maxTimer: ReturnType<typeof setTimeout> | null = null;
+          let done = false;
+
+          const finishWait = () => {
+            if (done) return;
+            done = true;
+            if (settleTimer) clearTimeout(settleTimer);
+            if (maxTimer) clearTimeout(maxTimer);
+            sessionEntry.onCancelTurn = undefined;
+            sessionEntry.activeUpdateListener = translator.onUpdate;
+            sessionEntry.activeCustomListener = (payload) => {
+              emit({ type: EventType.CUSTOM, name: "acp", value: payload });
+            };
+            resolveWait();
+          };
+
+          const armSettle = (delayMs: number) => {
+            if (settleTimer) clearTimeout(settleTimer);
+            settleTimer = setTimeout(() => {
+              if (translator.hasPendingBackgroundTask()) {
+                translator.clearPendingBackgroundTask();
+                return;
+              }
+              if (!translator.hasOpenTools() && sessionEntry.pendingPermissions.size === 0) {
+                finishWait();
+              }
+            }, delayMs);
+          };
+
+          // Clear the initial turn's flag so we wait for the background task wakeup
+          translator.clearPendingBackgroundTask();
+          maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
+          sessionEntry.onCancelTurn = finishWait;
+
+          sessionEntry.activeUpdateListener = (update) => {
+            translator.onUpdate(update);
+            if (maxTimer) clearTimeout(maxTimer);
+            maxTimer = setTimeout(finishWait, MAX_WAIT_MS);
+
+            if (translator.hasPendingBackgroundTask()) {
+              if (settleTimer) {
+                clearTimeout(settleTimer);
+                settleTimer = null;
+              }
+              return;
+            }
+            if (!translator.hasOpenTools() && sessionEntry.pendingPermissions.size === 0) {
+              armSettle(IDLE_SETTLE_MS);
+            } else if (settleTimer) {
+              clearTimeout(settleTimer);
+              settleTimer = null;
+            }
+          };
+
+          sessionEntry.activeCustomListener = (payload) => {
+            emit({ type: EventType.CUSTOM, name: "acp", value: payload });
+            if (payload.type === "usage" && !translator.hasPendingBackgroundTask() && !translator.hasOpenTools()) {
+              armSettle(400);
+            }
+          };
+        });
+      }
+
       translator.flush();
 
       if (!translator.hasAssistantText()) {
@@ -420,6 +488,7 @@ export async function POST(req: NextRequest) {
       sessionEntry.lastUsed = Date.now();
       sessionEntry.activeUpdateListener = undefined;
       sessionEntry.activeCustomListener = undefined;
+      sessionEntry.onCancelTurn = undefined;
       finish();
     }
   })();

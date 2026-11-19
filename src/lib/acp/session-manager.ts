@@ -83,6 +83,7 @@ export interface AcpSessionEntry {
   activeRun?: BufferedRun;
   activeUpdateListener?: UpdateListener;
   activeCustomListener?: CustomListener;
+  onCancelTurn?: () => void;
   replayCollector?: acp.SessionUpdate[];
 }
 
@@ -757,6 +758,7 @@ export async function cancelAcpTurn(threadId: string): Promise<void> {
   await entry.connection.agent.notify(acp.AGENT_METHODS.session_cancel, {
     sessionId: entry.sessionId,
   });
+  entry.onCancelTurn?.();
 }
 
 export function resolveAcpPermission(

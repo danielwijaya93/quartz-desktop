@@ -6,6 +6,9 @@ export interface AcpStreamTranslator {
   onUpdate: (update: acp.SessionUpdate) => void;
   flush: () => void;
   hasAssistantText: () => boolean;
+  hasPendingBackgroundTask: () => boolean;
+  clearPendingBackgroundTask: () => void;
+  hasOpenTools: () => boolean;
   getToolArgs: (toolCallId: string) => string | undefined;
 }
 
@@ -17,6 +20,7 @@ export function createAcpStreamTranslator(
 ): AcpStreamTranslator {
   let currentTextId: string | null = null;
   let assistantTextEmitted = false;
+  let pendingBackgroundTask = false;
   let thinkingId: string | null = null;
   let thinkingStarted = false;
   let thinkingText = "";
@@ -122,6 +126,9 @@ export function createAcpStreamTranslator(
         if (!st.resultSent) {
           st.resultSent = true;
           const outputText = extractAcpToolOutput(update);
+          if (outputText.includes("Tool is running as a background task")) {
+            pendingBackgroundTask = true;
+          }
           emit({
             type: EventType.TOOL_CALL_RESULT,
             messageId: crypto.randomUUID(),
@@ -180,6 +187,11 @@ export function createAcpStreamTranslator(
     onUpdate,
     flush,
     hasAssistantText: () => assistantTextEmitted,
+    hasPendingBackgroundTask: () => pendingBackgroundTask,
+    clearPendingBackgroundTask: () => {
+      pendingBackgroundTask = false;
+    },
+    hasOpenTools: () => Array.from(toolState.values()).some((st) => st.started && !st.ended),
     getToolArgs: (toolCallId: string) => toolState.get(toolCallId)?.lastArgs,
   };
 }

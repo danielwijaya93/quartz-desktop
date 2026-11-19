@@ -101,7 +101,16 @@ export function ThreadRunRecovery() {
           }
         }
 
-        if (lastMsg.role !== "user") return;
+        const hasPendingBgTaskInTurn = messagesRef.current
+          .slice(lastUserIdx + 1)
+          .some(
+            (m) =>
+              m.role === "tool" &&
+              typeof m.content === "string" &&
+              m.content.includes("Tool is running as a background task"),
+          );
+
+        if (lastMsg.role !== "user" && !hasPendingBgTaskInTurn) return;
 
         // Fallback if server restarted: reload from ACP's persisted session store
         const state = acpStore.getState();
