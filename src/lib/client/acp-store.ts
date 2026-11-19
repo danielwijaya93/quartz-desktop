@@ -93,6 +93,7 @@ export interface AcpClientState {
   preferredMode: string;
   preferredModel: string;
   preferredThoughtLevel: string;
+  notificationsEnabled: boolean;
   snapshots: Record<string, AcpSessionSnapshot>;
   acpSessionIds: Record<string, string>;
   appDataDirs: Record<string, AcpAppDataDir>;
@@ -240,6 +241,8 @@ function loadInitialPrefs(): Partial<AcpClientState> {
       preferredModel: typeof parsed.preferredModel === "string" ? parsed.preferredModel : "",
       preferredThoughtLevel:
         typeof parsed.preferredThoughtLevel === "string" ? parsed.preferredThoughtLevel : "",
+      notificationsEnabled:
+        typeof parsed.notificationsEnabled === "boolean" ? parsed.notificationsEnabled : true,
       acpSessionIds,
       appDataDirs: sanitizeAppDataDirRecord(parsed.appDataDirs),
       threadOpenUI: sanitizeBooleanRecord(parsed.threadOpenUI),
@@ -268,6 +271,7 @@ const INITIAL_STATE: AcpClientState = {
   preferredMode: "auto",
   preferredModel: "",
   preferredThoughtLevel: "",
+  notificationsEnabled: true,
   snapshots: {},
   acpSessionIds: {},
   appDataDirs: {},
@@ -329,6 +333,7 @@ function persistPrefs(): void {
         preferredMode: state.preferredMode,
         preferredModel: state.preferredModel,
         preferredThoughtLevel: state.preferredThoughtLevel,
+        notificationsEnabled: state.notificationsEnabled,
         appDataDirs: state.appDataDirs,
         threadOpenUI: state.threadOpenUI,
         pendingAutoTitleIds: state.pendingAutoTitleIds,
@@ -424,6 +429,21 @@ export const acpStore = {
       hasInitializedDefaultFolder = true;
     }
 
+    let nextThreadStatus = state.threadStatus;
+    const currentStatus = state.threadStatus[threadId];
+    if (snapshot.pendingPermissions.length > 0) {
+      if (currentStatus !== "needs_input") {
+        nextThreadStatus = { ...state.threadStatus, [threadId]: "needs_input" };
+      }
+    } else if (snapshot.isStreaming) {
+      if (currentStatus !== "working") {
+        nextThreadStatus = { ...state.threadStatus, [threadId]: "working" };
+      }
+    } else if (currentStatus === "working" || currentStatus === "needs_input") {
+      nextThreadStatus = { ...state.threadStatus };
+      delete nextThreadStatus[threadId];
+    }
+
     state = {
       ...state,
       cwd: state.cwd || normalizedSnapCwd,
@@ -433,6 +453,7 @@ export const acpStore = {
       snapshots: { ...state.snapshots, [threadId]: snapshot },
       acpSessionIds: nextMap,
       appDataDirs: nextAppDataDirs,
+      threadStatus: nextThreadStatus,
     };
     persistPrefs();
     scheduleWorkspaceSync();
@@ -611,6 +632,7 @@ export const acpStore = {
     preferredMode?: string;
     preferredModel?: string;
     preferredThoughtLevel?: string;
+    notificationsEnabled?: boolean;
   }): void {
     state = { ...state, ...patch };
     persistPrefs();
@@ -1056,14 +1078,14 @@ export function partitionThreadsByFolder<T extends { id: string }>(params: {
   return { byFolder, hiddenThreads };
 }
 
-/** Resolves the effective sidebar activity status for a thread from client status + snapshot state. */
+/** Resolves the effective sidebar activity status for a thread from client status + optional snapshot state. */
 export function resolveThreadActivityStatus(
   threadId: string,
   threadStatus: Record<string, ThreadActivityStatus>,
-  snapshots: Record<string, AcpSessionSnapshot>,
+  snapshots?: Record<string, AcpSessionSnapshot>,
 ): ThreadActivityStatus | null {
   const status = threadStatus[threadId];
-  const snap = snapshots[threadId];
+  const snap = snapshots?.[threadId];
   if (status === "needs_input" || (snap?.pendingPermissions.length ?? 0) > 0) {
     return "needs_input";
   }
@@ -1103,7 +1125,7 @@ export function groupActiveThreadsByStatus<T extends { id: string }>(params: {
   hiddenThreadIds: string[];
   activeFolderId: string | null;
   threadStatus: Record<string, ThreadActivityStatus>;
-  snapshots: Record<string, AcpSessionSnapshot>;
+  snapshots?: Record<string, AcpSessionSnapshot>;
 }): ActiveThreadStatusGroup<T>[] {
   const hiddenSet = new Set(params.hiddenThreadIds);
   const folderById = new Map(params.folders.map((f) => [f.id, f]));

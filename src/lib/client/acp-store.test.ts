@@ -44,6 +44,7 @@ function makeState(
     preferredMode: "auto",
     preferredModel: "",
     preferredThoughtLevel: "",
+    notificationsEnabled: true,
     snapshots,
     acpSessionIds: {},
     appDataDirs: {},
@@ -228,6 +229,11 @@ describe("acpStore hydration and folder lifecycle", () => {
 
     acpStore.setSnapshot("thread-app", makeSnapshot("thread-app", { appDataDir: "antigravity" }));
     expect(acpStore.getState().appDataDirs["thread-app"]).toBe("antigravity");
+
+    acpStore.setSnapshot("thread-stream", makeSnapshot("thread-stream", { isStreaming: true }));
+    expect(acpStore.getState().threadStatus["thread-stream"]).toBe("working");
+    acpStore.setSnapshot("thread-stream", makeSnapshot("thread-stream", { isStreaming: false }));
+    expect(acpStore.getState().threadStatus["thread-stream"]).toBeUndefined();
 
     // Per-thread OpenUI toggle defaults to true and resets bootstrap on promote
     expect(selectEffectiveOpenUI(acpStore.getState(), "thread-new")).toBe(true);

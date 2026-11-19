@@ -5,6 +5,15 @@ export const metadata: Metadata = {
   title: "Antigravity Generative UI Agent",
   description:
     "Antigravity agent powered by agy ACP and OpenUI that answers with interactive charts, forms, tables, and dashboards.",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Antigravity",
+  },
 };
 
 export const viewport: Viewport = {

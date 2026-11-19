@@ -69,7 +69,6 @@ export function FolderSidebar() {
   const activeFolderId = useAcpStore((s) => s.activeFolderId);
   const threadFolderMap = useAcpStore((s) => s.threadFolderMap);
   const hiddenThreadIds = useAcpStore((s) => s.hiddenThreadIds);
-  const snapshots = useAcpStore((s) => s.snapshots);
   const threadStatus = useAcpStore((s) => s.threadStatus);
   const hydrated = useAcpStore((s) => s.hydrated);
 
@@ -116,9 +115,8 @@ export function FolderSidebar() {
         hiddenThreadIds,
         activeFolderId,
         threadStatus,
-        snapshots,
       }),
-    [threads, folders, threadFolderMap, hiddenThreadIds, activeFolderId, threadStatus, snapshots],
+    [threads, folders, threadFolderMap, hiddenThreadIds, activeFolderId, threadStatus],
   );
 
   const activeThreadCount = useMemo(
@@ -177,7 +175,8 @@ export function FolderSidebar() {
     setRenamingThreadId(null);
   };
 
-  const showSkeleton = !hydrated || !hasRequestedThreads || isLoadingThreads;
+  const showSkeleton =
+    !hydrated || !hasRequestedThreads || (isLoadingThreads && threads.length === 0);
 
   return (
     <div className="openui-agent-thread-list" aria-label="Workspace folders and threads">
@@ -365,7 +364,6 @@ export function FolderSidebar() {
                         const activityStatus = resolveThreadActivityStatus(
                           thread.id,
                           threadStatus,
-                          snapshots,
                         );
 
                         return (

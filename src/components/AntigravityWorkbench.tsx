@@ -7,6 +7,7 @@ import { AntigravityComposer } from "@/components/AntigravityComposer";
 import { AntigravityUserMessage } from "@/components/AntigravityUserMessage";
 import { AntigravityDialogs } from "@/components/Dialogs";
 import { FolderSidebar } from "@/components/FolderSidebar";
+import { NotificationBellButton, NotificationManager } from "@/components/NotificationManager";
 import { ThreadAutoRenamer } from "@/components/ThreadAutoRenamer";
 import { ThreadRunRecovery } from "@/components/ThreadRunRecovery";
 import { ThreadSyncManager } from "@/components/ThreadSyncManager";
@@ -158,7 +159,10 @@ export function AntigravityWorkbench() {
 
           <AgentInterface.SidebarFooter>
             <div className="antigravity-sidebar-footer-bar flex w-full items-center justify-between border-t border-black/[0.06] dark:border-white/[0.08] px-1 pt-2">
-              <ImportSessionButton />
+              <div className="antigravity-sidebar-footer-actions flex items-center gap-0.5">
+                <ImportSessionButton />
+                <NotificationBellButton />
+              </div>
               <AgentInterface.ThemeModeToggle mode={mode} onModeChange={setPreference} />
             </div>
           </AgentInterface.SidebarFooter>
@@ -172,7 +176,12 @@ export function AntigravityWorkbench() {
 
         <AgentInterface.MobileHeader
           newChatButton={false}
-          actions={<ImportSessionButton />}
+          actions={
+            <div className="flex items-center gap-1">
+              <NotificationBellButton />
+              <ImportSessionButton />
+            </div>
+          }
         />
 
         <AgentInterface.Welcome>
@@ -184,6 +193,7 @@ export function AntigravityWorkbench() {
         </AgentInterface.Composer>
 
         <AntigravityDialogs />
+        <NotificationManager />
         <ThreadAutoRenamer />
         <ThreadRunRecovery />
         <ThreadSyncManager />
