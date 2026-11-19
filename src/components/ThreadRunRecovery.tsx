@@ -13,9 +13,8 @@ import {
 import { useEffect, useRef } from "react";
 
 /**
- * Recovers an in-progress or recently completed ACP turn after a mobile page refresh,
- * background tab suspension, or stalled stream—even if partial assistant messages were
- * already persisted before the disconnect.
+ * Recovers an in-progress or recently completed ACP turn after a thread switch,
+ * mobile page refresh, background tab suspension, or stalled stream.
  */
 export function ThreadRunRecovery() {
   const selectedThreadId = useThreadList((s) => s.selectedThreadId);
@@ -24,23 +23,20 @@ export function ThreadRunRecovery() {
   const isLoadingMessages = useThread((s) => s.isLoadingMessages);
   const setMessages = useThread((s) => s.setMessages);
 
-  const attemptedKeysRef = useRef<Set<string>>(new Set());
+  const recoveredRunsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
   useEffect(() => {
     if (!selectedThreadId || isLoadingMessages || isRunning) return;
-    if (messages.length === 0) return;
+    const currentMsgs = messagesRef.current;
+    if (currentMsgs.length === 0) return;
 
-    const lastMsg = messages[messages.length - 1];
+    const lastMsg = currentMsgs[currentMsgs.length - 1];
     if (!lastMsg) return;
 
-    const lastUserIdx = messages.findLastIndex((m) => m.role === "user");
+    const lastUserIdx = currentMsgs.findLastIndex((m) => m.role === "user");
     if (lastUserIdx === -1) return;
-
-    const attemptKey = `${selectedThreadId}:${lastMsg.id}:${messages.length}`;
-    if (attemptedKeysRef.current.has(attemptKey)) return;
-    attemptedKeysRef.current.add(attemptKey);
 
     const controller = new AbortController();
 
@@ -52,18 +48,21 @@ export function ThreadRunRecovery() {
         );
 
         let shouldAttachRun = lastMsg.role === "user";
+        let activeRunKey: string | null = null;
+
         if (metaRes.ok) {
           const meta = (await metaRes.json()) as {
             runId?: string;
             done?: boolean;
             finishedAt?: number | null;
           };
-          if (!meta.done || lastMsg.role === "user") {
+          if (meta.done === false) {
             shouldAttachRun = true;
-          } else if (meta.finishedAt) {
-            const recoveredKey = `${selectedThreadId}:run:${meta.runId ?? meta.finishedAt}`;
-            if (!attemptedKeysRef.current.has(recoveredKey)) {
-              attemptedKeysRef.current.add(recoveredKey);
+            acpStore.setThreadStatus(selectedThreadId, "working");
+          } else if (meta.finishedAt && meta.runId) {
+            const runKey = `${selectedThreadId}:run:${meta.runId}`;
+            if (!recoveredRunsRef.current.has(runKey)) {
+              activeRunKey = runKey;
               shouldAttachRun = true;
             }
           }
@@ -92,6 +91,9 @@ export function ThreadRunRecovery() {
               adapter: createAcpStreamAdapter(() => selectedThreadId),
             });
 
+            if (activeRunKey) {
+              recoveredRunsRef.current.add(activeRunKey);
+            }
             if (reply.size > 0) {
               const finalMessages = [...baseMessages, ...reply.values()];
               setMessages(finalMessages);
@@ -101,15 +103,19 @@ export function ThreadRunRecovery() {
           }
         }
 
-        const hasPendingBgTaskInTurn = messagesRef.current
-          .slice(lastUserIdx + 1)
-          .some(
-            (m) =>
-              m.role === "tool" &&
-              typeof m.content === "string" &&
-              (m.content.includes("Tool is running as a background task") ||
-                m.content.trimStart().startsWith('{"CommandLine":')),
-          );
+        const latestMsgs = messagesRef.current;
+        const latestUserIdx = latestMsgs.findLastIndex((m) => m.role === "user");
+        const hasPendingBgTaskInTurn =
+          latestUserIdx !== -1 &&
+          latestMsgs
+            .slice(latestUserIdx + 1)
+            .some(
+              (m) =>
+                m.role === "tool" &&
+                typeof m.content === "string" &&
+                (m.content.includes("Tool is running as a background task") ||
+                  m.content.trimStart().startsWith('{"CommandLine":')),
+            );
 
         if (lastMsg.role !== "user" && !hasPendingBgTaskInTurn) return;
 
@@ -117,6 +123,10 @@ export function ThreadRunRecovery() {
         const state = acpStore.getState();
         const acpSessionId = state.acpSessionIds[selectedThreadId];
         if (!acpSessionId) return;
+
+        const fallbackKey = `${selectedThreadId}:load:${lastMsg.id}:${latestMsgs.length}`;
+        if (recoveredRunsRef.current.has(fallbackKey)) return;
+        recoveredRunsRef.current.add(fallbackKey);
 
         const loadRes = await fetch("/api/acp/session", {
           method: "POST",
@@ -154,7 +164,7 @@ export function ThreadRunRecovery() {
     return () => {
       controller.abort();
     };
-  }, [selectedThreadId, isLoadingMessages, isRunning, messages, setMessages]);
+  }, [selectedThreadId, isLoadingMessages, isRunning, setMessages]);
 
   return null;
 }

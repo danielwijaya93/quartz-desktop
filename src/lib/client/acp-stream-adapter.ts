@@ -17,6 +17,7 @@ export function createAcpStreamAdapter(
     async *parse(response: Response) {
       let askedQuestion = false;
       let finished = false;
+      let aborted = false;
       const threadId = getThreadId(response);
 
       try {
@@ -52,9 +53,17 @@ export function createAcpStreamAdapter(
 
           yield event;
         }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          aborted = true;
+        } else if (err instanceof Error && err.name === "AbortError") {
+          aborted = true;
+        }
+        throw err;
       } finally {
         const finalId = getThreadId(response) || threadId;
-        if (!finished && finalId && acpStore.getState().threadStatus[finalId] === "working") {
+        // Do not mark a run complete on client abort (e.g. thread switch); the server run is still active.
+        if (!aborted && !finished && finalId && acpStore.getState().threadStatus[finalId] === "working") {
           acpStore.completeThreadRun(finalId, { needsInput: askedQuestion });
         }
       }
