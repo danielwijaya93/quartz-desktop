@@ -573,15 +573,35 @@ export const acpStore = {
 
   completeThreadRun(threadId: string, options?: { needsInput?: boolean }): void {
     if (!threadId) return;
-    if (options?.needsInput) {
-      this.setThreadStatus(threadId, "needs_input");
-      return;
+    const prevSnap = state.snapshots[threadId];
+    const nextSnapshots =
+      prevSnap && prevSnap.isStreaming
+        ? { ...state.snapshots, [threadId]: { ...prevSnap, isStreaming: false } }
+        : state.snapshots;
+
+    const nextStatus: ThreadActivityStatus | null = options?.needsInput
+      ? "needs_input"
+      : state.activeThreadId && state.activeThreadId === threadId
+        ? null
+        : "unread";
+
+    let nextThreadStatus = state.threadStatus;
+    if (nextStatus === null) {
+      if (threadId in state.threadStatus) {
+        nextThreadStatus = { ...state.threadStatus };
+        delete nextThreadStatus[threadId];
+      }
+    } else if (state.threadStatus[threadId] !== nextStatus) {
+      nextThreadStatus = { ...state.threadStatus, [threadId]: nextStatus };
     }
-    if (state.activeThreadId && state.activeThreadId === threadId) {
-      this.setThreadStatus(threadId, null);
-    } else {
-      this.setThreadStatus(threadId, "unread");
-    }
+
+    if (nextSnapshots === state.snapshots && nextThreadStatus === state.threadStatus) return;
+    state = {
+      ...state,
+      snapshots: nextSnapshots,
+      threadStatus: nextThreadStatus,
+    };
+    emit();
   },
 
   setPreferences(patch: {

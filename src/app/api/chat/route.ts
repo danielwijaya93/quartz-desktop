@@ -402,6 +402,7 @@ export async function POST(req: NextRequest) {
         emit({ type: EventType.TEXT_MESSAGE_END, messageId: fallbackMsgId });
       }
 
+      sessionEntry.isStreaming = false;
       emit({
         type: EventType.CUSTOM,
         name: "acp",

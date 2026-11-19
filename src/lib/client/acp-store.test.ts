@@ -252,10 +252,12 @@ describe("acpStore hydration and folder lifecycle", () => {
 
     // Per-thread sidebar activity status lifecycle (working -> needs_input -> unread -> viewed)
     acpStore.markThreadViewed("thread-other");
+    acpStore.setSnapshot("thread-bg", makeSnapshot("thread-bg", { isStreaming: true }));
     acpStore.setThreadStatus("thread-bg", "working");
     expect(acpStore.getState().threadStatus["thread-bg"]).toBe("working");
     acpStore.completeThreadRun("thread-bg");
     expect(acpStore.getState().threadStatus["thread-bg"]).toBe("unread");
+    expect(acpStore.getState().snapshots["thread-bg"]?.isStreaming).toBe(false);
     acpStore.markThreadViewed("thread-bg");
     expect(acpStore.getState().threadStatus["thread-bg"]).toBeUndefined();
 
