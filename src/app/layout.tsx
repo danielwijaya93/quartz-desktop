@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Antigravity Generative UI Agent",
+  title: "Quartz Desktop",
   description:
-    "Antigravity agent powered by agy ACP and OpenUI that answers with interactive charts, forms, tables, and dashboards.",
+    "Quartz Desktop — a generative-UI workbench for the Quartz and Antigravity ACP agents (OpenUI).",
   icons: {
     icon: "/icon.svg",
     apple: "/icon.svg",

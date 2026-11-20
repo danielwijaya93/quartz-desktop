@@ -1,6 +1,8 @@
-# Antigravity Generative UI Agent
+# Quartz Desktop
 
-An interactive Antigravity workbench powered by [`agy acp`](https://antigravity.google/docs) and [OpenUI](https://github.com/thesysdev/openui) (`@openuidev/react-ui`, `@openuidev/react-lang`, `@openuidev/lang-core`, `@agentclientprotocol/sdk`) where every response renders as live charts, forms, tables, and dashboards—while keeping Antigravity CLI feature parity.
+An interactive workbench for the [Quartz](https://github.com/danielwijaya93/quartz) and Antigravity ACP agents, with every response rendered as live charts, forms, tables, and dashboards.
+
+## The Antigravity workbench (powered by [`agy acp`](https://antigravity.google/docs) and [OpenUI](https://github.com/thesysdev/openui) (`@openuidev/react-ui`, `@openuidev/react-lang`, `@openuidev/lang-core`, `@agentclientprotocol/sdk`), while keeping Antigravity CLI feature parity.
 
 ## Features
 
