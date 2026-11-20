@@ -17,7 +17,7 @@
 - **Application Name**: Quartz Desktop — a Next.js generative-UI workbench for the Quartz (`quartz --acp`) and Antigravity (`agy acp`) ACP agents, rendered with OpenUI
 - **Default Branch**: `main`
 - **Git Author**: Daniel Wijaya <danielwijaya93@gmail.com>
-- **Production Service**: `antigravity-gen-ui.service` (systemd user unit, port 3000) — see [Deployment](#deployment)
+- **Production Service**: `quartz-desktop.service` (systemd user unit, port 3000) — see [Deployment](#deployment)
 
 ---
 
@@ -104,7 +104,7 @@ The production server runs as a systemd user service (`~/.config/systemd/user/an
 
 ```bash
 npm run build                        # regenerate OpenUI spec + build
-systemctl --user restart antigravity-gen-ui.service
+systemctl --user restart quartz-desktop.service
 curl -s http://127.0.0.1:3000/ >/dev/null && echo "service up"
 ```
 
