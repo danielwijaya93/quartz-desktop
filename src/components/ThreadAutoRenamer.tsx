@@ -98,6 +98,7 @@ export function ThreadAutoRenamer() {
             userMessage: userText,
             assistantPreview: assistantText,
             cwd: latest.snapshots[threadId]?.cwd || cwd || undefined,
+          provider: latest.preferredProvider ?? "antigravity",
           }),
         });
         if (!res.ok) return;

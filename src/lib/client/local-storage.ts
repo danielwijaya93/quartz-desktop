@@ -187,6 +187,7 @@ export async function importReplayedSessionToStorage(params: {
     acpStore.assignThreadToFolder(params.threadId, folder.id);
   }
   acpStore.setSnapshot(params.threadId, params.snapshot);
+  acpStore.setPreferences({ preferredProvider: params.snapshot.provider ?? "antigravity" });
   void pushSyncUpsertThread({
     ...thread,
     acpSessionId: params.snapshot.sessionId,
@@ -223,6 +224,7 @@ export function createAntigravityChatBindings(): {
           const openuiEnabled = acpStore.promoteBootstrapOpenUI(threadId);
           mergedBody = JSON.stringify({
             ...parsed,
+            provider: state.preferredProvider ?? "antigravity",
             openuiEnabled,
             acpSessionId: state.acpSessionIds[threadId],
             appDataDir: state.appDataDirs[threadId],

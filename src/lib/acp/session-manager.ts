@@ -6,6 +6,7 @@ import {
 export { convertReplayedUpdatesToMessages, extractAcpToolOutput };
 import type {
   AcpAppDataDir,
+  AgentProvider,
   AcpCommand,
   AcpConfigOption,
   AcpCustomEventPayload,
@@ -20,6 +21,7 @@ import type {
   HistoricalAcpSession,
   PendingPermissionRequest,
 } from "@/lib/acp/types";
+import { acpClientInfoName } from "@/lib/acp/agent-provider";
 import { isSyntheticTitleSession } from "@/lib/acp/thread-title";
 import { resolveAdditionalDirs, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import { getOpenUISystemPrompt } from "@/lib/openui/prompt";
@@ -56,6 +58,7 @@ interface PendingPermissionEntry {
 export interface AcpSessionEntry {
   threadId: string;
   sessionId: string;
+  provider: AgentProvider;
   openuiEnabled: boolean;
   appDataDir: AcpAppDataDir;
   child: ChildProcessWithoutNullStreams;
@@ -89,6 +92,7 @@ export interface AcpSessionEntry {
 
 export interface GetOrCreateSessionOptions {
   threadId: string;
+  provider?: AgentProvider;
   openuiEnabled?: boolean;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
@@ -199,13 +203,13 @@ function evictOldestIfFull(): void {
   }
 }
 
-function buildSessionMeta(openuiEnabled: boolean): Record<string, unknown> | undefined {
+function buildSessionMeta(
+  openuiEnabled: boolean,
+  provider: AgentProvider = "antigravity",
+): Record<string, unknown> | undefined {
   if (!openuiEnabled) return undefined;
-  return {
-    antigravity: {
-      systemPrompt: { append: getOpenUISystemPrompt() },
-    },
-  };
+  const append = { systemPrompt: { append: getOpenUISystemPrompt() } };
+  return provider === "quartz" ? { quartz: append } : { antigravity: append };
 }
 
 function mapMcpServersToAcp(servers: AcpSessionMcpServer[]): acp.McpServer[] {
@@ -358,7 +362,8 @@ export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot
   return {
     threadId: entry.threadId,
     sessionId: entry.sessionId,
-    appDataDir: entry.appDataDir,
+    provider: entry.provider,
+    appDataDir: entry.provider === "quartz" ? undefined : entry.appDataDir,
     cwd: entry.cwd,
     additionalDirectories: entry.additionalDirectories,
     title: entry.title,
@@ -374,11 +379,16 @@ export function buildSessionSnapshot(entry: AcpSessionEntry): AcpSessionSnapshot
   };
 }
 
-/** Builds the CLI command and arguments for spawning the `agy acp` process. */
+/** Builds the CLI command and arguments for spawning the ACP agent process. */
 export function buildAgentSpawnSpec(params: {
+  provider?: AgentProvider;
   additionalDirectories: string[];
   appDataDir?: AcpAppDataDir;
 }): { command: string; args: string[] } {
+  if (params.provider === "quartz") {
+    // Quartz applies provider/model/effort from its own config; no agy flags.
+    return { command: "quartz", args: ["--acp"] };
+  }
   const args = ["acp", "--disable-telemetry"];
   if (params.appDataDir && params.appDataDir !== "antigravity-cli") {
     args.push("--app-data-dir", params.appDataDir);
@@ -390,6 +400,7 @@ export function buildAgentSpawnSpec(params: {
 }
 
 function spawnAcpConnection(params: {
+  provider?: AgentProvider;
   cwd: string;
   additionalDirectories: string[];
   appDataDir?: AcpAppDataDir;
@@ -399,7 +410,9 @@ function spawnAcpConnection(params: {
   child: ChildProcessWithoutNullStreams;
   connection: acp.ClientConnection;
 } {
+  const provider = params.provider ?? "antigravity";
   const { command, args } = buildAgentSpawnSpec({
+    provider,
     additionalDirectories: params.additionalDirectories,
     appDataDir: params.appDataDir,
   });
@@ -416,7 +429,7 @@ function spawnAcpConnection(params: {
   );
 
   const app = acp
-    .client({ name: "antigravity-gen-ui" })
+    .client({ name: acpClientInfoName(provider) })
     .onRequest(acp.CLIENT_METHODS.session_request_permission, async ({ params: req }) =>
       params.onPermissionRequest(req),
     )
@@ -560,11 +573,13 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
   const cwd = resolveWorkspaceDir(options.cwd);
   const additionalDirectories = resolveAdditionalDirs(options.additionalDirectories);
   const mcpServers = options.mcpServers ?? [];
+  const provider = options.provider ?? "antigravity";
   const appDataDir = detectSessionAppDataDir(options.acpSessionId, options.appDataDir);
 
   let entryRef: AcpSessionEntry | undefined;
 
   const { child, connection } = spawnAcpConnection({
+    provider,
     cwd,
     additionalDirectories,
     appDataDir,
@@ -585,17 +600,18 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
       },
-      clientInfo: { name: "antigravity-gen-ui", version: "0.1.0" },
+      clientInfo: { name: acpClientInfoName(provider), version: "0.1.0" },
     });
 
     const openuiEnabled = options.openuiEnabled ?? true;
-    const sessionMeta = buildSessionMeta(openuiEnabled);
+    const sessionMeta = buildSessionMeta(openuiEnabled, provider);
     const acpMcpServers = mapMcpServersToAcp(mcpServers);
     const replayUpdates: acp.SessionUpdate[] = [];
 
     const entry: AcpSessionEntry = {
       threadId: options.threadId,
       sessionId: "",
+      provider,
       openuiEnabled,
       appDataDir,
       child,
@@ -654,16 +670,20 @@ async function createSessionEntry(options: GetOrCreateSessionOptions): Promise<A
     entry.replayCollector = undefined;
     applySessionResponseMetadata(entry, sessionResp as SessionResponseWithModels);
 
-    // Default to `auto` mode per configuration unless explicitly overridden
-    const targetMode = options.mode ?? "auto";
-    if (targetMode && entry.modes?.currentModeId !== targetMode) {
-      await applyConfigSafely(entry, "mode", targetMode);
-    }
-    if (options.model) {
-      await applyConfigSafely(entry, "model", options.model);
-    }
-    if (options.thoughtLevel) {
-      await applyConfigSafely(entry, "thought_level", options.thoughtLevel);
+    // Quartz configures provider/model/effort at spawn time (from its own
+    // config), so session config options only apply to Antigravity.
+    if (provider !== "quartz") {
+      // Default to `auto` mode per configuration unless explicitly overridden
+      const targetMode = options.mode ?? "auto";
+      if (targetMode && entry.modes?.currentModeId !== targetMode) {
+        await applyConfigSafely(entry, "mode", targetMode);
+      }
+      if (options.model) {
+        await applyConfigSafely(entry, "model", options.model);
+      }
+      if (options.thoughtLevel) {
+        await applyConfigSafely(entry, "thought_level", options.thoughtLevel);
+      }
     }
 
     // Give initial session/update notifications (e.g. available_commands_update) a tick to settle
@@ -686,9 +706,13 @@ export async function getOrCreateAcpSession(
   evictIdle(now);
 
   const requestedOpenUI = options.openuiEnabled ?? true;
+  const requestedProvider = options.provider ?? "antigravity";
   const existing = SESSIONS.get(options.threadId);
   if (existing && !existing.child.killed) {
-    if (existing.openuiEnabled !== requestedOpenUI && !existing.isStreaming) {
+    if (
+      (existing.openuiEnabled !== requestedOpenUI || existing.provider !== requestedProvider) &&
+      !existing.isStreaming
+    ) {
       const resumeSessionId = options.acpSessionId ?? (existing.sessionId || undefined);
       disposeEntry(existing);
       SESSIONS.delete(options.threadId);
@@ -791,6 +815,7 @@ async function listSessionsFromStore(
   appDataDir: AcpAppDataDir,
 ): Promise<HistoricalAcpSession[]> {
   const { child, connection } = spawnAcpConnection({
+    provider: "antigravity",
     cwd: resolvedCwd,
     additionalDirectories: [],
     appDataDir,
@@ -810,7 +835,48 @@ async function listSessionsFromStore(
     });
     return resp.sessions.map((s) => ({
       sessionId: s.sessionId,
+      provider: "antigravity" as const,
       appDataDir: detectSessionAppDataDir(s.sessionId, appDataDir),
+      cwd: s.cwd,
+      additionalDirectories: s.additionalDirectories ?? undefined,
+      title: s.title ?? undefined,
+      updatedAt: s.updatedAt ?? undefined,
+    }));
+  } finally {
+    try {
+      connection.close();
+    } catch {
+      // ignore
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Lists Quartz sessions via the standard ACP `session/list` method. */
+async function listQuartzSessions(resolvedCwd: string): Promise<HistoricalAcpSession[]> {
+  const { child, connection } = spawnAcpConnection({
+    provider: "quartz",
+    cwd: resolvedCwd,
+    additionalDirectories: [],
+    onSessionUpdate: () => {},
+    onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }),
+  });
+  try {
+    await connection.agent.request(acp.AGENT_METHODS.initialize, {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+      clientInfo: { name: "quartz-gen-ui-list", version: "0.1.0" },
+    });
+    const resp = await connection.agent.request(acp.AGENT_METHODS.session_list, {
+      cwd: resolvedCwd,
+    });
+    return resp.sessions.map((s) => ({
+      sessionId: s.sessionId,
+      provider: "quartz" as const,
       cwd: s.cwd,
       additionalDirectories: s.additionalDirectories ?? undefined,
       title: s.title ?? undefined,
@@ -833,9 +899,10 @@ async function listSessionsFromStore(
 /** Lists recent Antigravity sessions across CLI (`antigravity-cli`) and App (`antigravity`) stores. */
 export async function listHistoricalAcpSessions(cwd?: string): Promise<HistoricalAcpSession[]> {
   const resolvedCwd = resolveWorkspaceDir(cwd);
-  const [cliResult, appResult] = await Promise.allSettled([
+  const [cliResult, appResult, quartzResult] = await Promise.allSettled([
     listSessionsFromStore(resolvedCwd, "antigravity-cli"),
     listSessionsFromStore(resolvedCwd, "antigravity"),
+    listQuartzSessions(resolvedCwd),
   ]);
 
   const byId = new Map<string, HistoricalAcpSession>();
@@ -858,8 +925,14 @@ export async function listHistoricalAcpSessions(cwd?: string): Promise<Historica
 
   if (appResult.status === "fulfilled") addItems(appResult.value);
   if (cliResult.status === "fulfilled") addItems(cliResult.value);
+  if (quartzResult.status === "fulfilled") addItems(quartzResult.value);
 
-  if (byId.size === 0 && cliResult.status === "rejected" && appResult.status === "rejected") {
+  if (
+    byId.size === 0 &&
+    cliResult.status === "rejected" &&
+    appResult.status === "rejected" &&
+    quartzResult.status === "rejected"
+  ) {
     throw cliResult.reason;
   }
 
@@ -883,6 +956,7 @@ function hasConversationUpdates(updates: acp.SessionUpdate[]): boolean {
 async function attemptLoadHistoricalSession(params: {
   threadId: string;
   acpSessionId: string;
+  provider: AgentProvider;
   appDataDir: AcpAppDataDir;
   cwd: string;
   additionalDirectories: string[];
@@ -892,6 +966,7 @@ async function attemptLoadHistoricalSession(params: {
   let entryRef: AcpSessionEntry | undefined;
 
   const { child, connection } = spawnAcpConnection({
+    provider: params.provider,
     cwd: params.cwd,
     additionalDirectories: params.additionalDirectories,
     appDataDir: params.appDataDir,
@@ -908,12 +983,13 @@ async function attemptLoadHistoricalSession(params: {
     await connection.agent.request(acp.AGENT_METHODS.initialize, {
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-      clientInfo: { name: "antigravity-gen-ui", version: "0.1.0" },
+      clientInfo: { name: acpClientInfoName(params.provider), version: "0.1.0" },
     });
 
     const entry: AcpSessionEntry = {
       threadId: params.threadId,
       sessionId: params.acpSessionId,
+      provider: params.provider,
       openuiEnabled: true,
       appDataDir: params.appDataDir,
       child,
@@ -937,11 +1013,7 @@ async function attemptLoadHistoricalSession(params: {
         cwd: params.cwd,
         additionalDirectories: params.additionalDirectories,
         mcpServers: mapMcpServersToAcp(params.mcpServers),
-        _meta: {
-          antigravity: {
-            systemPrompt: { append: getOpenUISystemPrompt() },
-          },
-        },
+        _meta: buildSessionMeta(true, params.provider),
       });
     } catch (loadErr) {
       if (params.mcpServers.length > 0) {
@@ -951,11 +1023,7 @@ async function attemptLoadHistoricalSession(params: {
           cwd: params.cwd,
           additionalDirectories: params.additionalDirectories,
           mcpServers: [],
-          _meta: {
-            antigravity: {
-              systemPrompt: { append: getOpenUISystemPrompt() },
-            },
-          },
+          _meta: buildSessionMeta(true, params.provider),
         });
       } else {
         throw loadErr;
@@ -966,7 +1034,9 @@ async function attemptLoadHistoricalSession(params: {
     await new Promise((r) => setTimeout(r, 100));
 
     applySessionResponseMetadata(entry, loaded as SessionResponseWithModels);
-    await applyConfigSafely(entry, "mode", "auto");
+    if (params.provider !== "quartz") {
+      await applyConfigSafely(entry, "mode", "auto");
+    }
 
     return { entry, replayed };
   } catch (err) {
@@ -982,6 +1052,7 @@ async function attemptLoadHistoricalSession(params: {
 export async function loadHistoricalAcpSession(params: {
   threadId: string;
   acpSessionId: string;
+  provider?: AgentProvider;
   appDataDir?: AcpAppDataDir;
   cwd?: string;
   additionalDirectories?: string[];
@@ -999,11 +1070,13 @@ export async function loadHistoricalAcpSession(params: {
   const cwd = resolveWorkspaceDir(params.cwd);
   const additionalDirectories = resolveAdditionalDirs(params.additionalDirectories);
   const mcpServers = params.mcpServers ?? [];
+  const provider = params.provider ?? "antigravity";
   const primaryStore = detectSessionAppDataDir(params.acpSessionId, params.appDataDir);
 
   let chosen = await attemptLoadHistoricalSession({
     threadId: params.threadId,
     acpSessionId: params.acpSessionId,
+    provider,
     appDataDir: primaryStore,
     cwd,
     additionalDirectories,
@@ -1011,13 +1084,15 @@ export async function loadHistoricalAcpSession(params: {
   });
 
   // Fallback across the alternate store if primary replayed 0 conversation messages
-  if (!hasConversationUpdates(chosen.replayed)) {
+  // (Antigravity only: Quartz has a single session store).
+  if (!hasConversationUpdates(chosen.replayed) && provider !== "quartz") {
     const alternateStore: AcpAppDataDir =
       primaryStore === "antigravity-cli" ? "antigravity" : "antigravity-cli";
     try {
       const alt = await attemptLoadHistoricalSession({
         threadId: params.threadId,
         acpSessionId: params.acpSessionId,
+        provider,
         appDataDir: alternateStore,
         cwd,
         additionalDirectories,

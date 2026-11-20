@@ -1,4 +1,8 @@
 import { resolveWorkspaceDir } from "@/lib/acp/workspace";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 import * as acp from "@agentclientprotocol/sdk";
 import { spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
@@ -152,4 +156,41 @@ export async function generateThreadTitleViaAgy(params: {
       // ignore
     }
   }
+}
+
+/**
+ * Generates a short title via headless `quartz -p` (model/config from the
+ * Quartz config). Used for Quartz-provider threads.
+ */
+export async function generateThreadTitleViaQuartz(params: {
+  userMessage: string;
+  assistantPreview?: string;
+  cwd?: string;
+}): Promise<string | null> {
+  const userMessage = params.userMessage.trim();
+  if (!userMessage) return null;
+  const cwd = resolveWorkspaceDir(params.cwd);
+  const prompt = buildThreadTitlePrompt(userMessage, params.assistantPreview);
+  try {
+    const { stdout } = await execFileAsync("quartz", ["-p", prompt, "--cwd", cwd], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return sanitizeThreadTitle(stdout);
+  } catch {
+    return null;
+  }
+}
+
+/** Generates a thread title via the selected provider's backend. */
+export async function generateThreadTitle(params: {
+  provider?: string | null;
+  userMessage: string;
+  assistantPreview?: string;
+  cwd?: string;
+}): Promise<string | null> {
+  if (params.provider === "quartz") {
+    return generateThreadTitleViaQuartz(params);
+  }
+  return generateThreadTitleViaAgy(params);
 }

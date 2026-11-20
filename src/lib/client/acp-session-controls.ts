@@ -91,6 +91,7 @@ export function useAcpSessionBootstrap(effectiveThreadId: string, hydrated: bool
       body: JSON.stringify({
         action: "init",
         threadId: effectiveThreadId,
+        provider: state.preferredProvider ?? "antigravity",
         openuiEnabled: selectEffectiveOpenUI(state, effectiveThreadId),
         acpSessionId: state.acpSessionIds[effectiveThreadId],
         appDataDir: state.appDataDirs[effectiveThreadId],

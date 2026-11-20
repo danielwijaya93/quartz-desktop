@@ -1,3 +1,5 @@
+export type AgentProvider = "antigravity" | "quartz";
+
 export interface WorkspaceFolder {
   id: string;
   name: string;
@@ -103,6 +105,7 @@ export interface AcpBackgroundTask {
 export interface AcpSessionSnapshot {
   threadId: string;
   sessionId: string;
+  provider: AgentProvider;
   appDataDir?: AcpAppDataDir;
   cwd: string;
   additionalDirectories: string[];
@@ -127,6 +130,7 @@ export interface AcpSessionSnapshot {
 
 export interface HistoricalAcpSession {
   sessionId: string;
+  provider: AgentProvider;
   appDataDir?: AcpAppDataDir;
   cwd: string;
   additionalDirectories?: string[];

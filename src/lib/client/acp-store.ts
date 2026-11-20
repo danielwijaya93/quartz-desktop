@@ -4,6 +4,7 @@ import type { AttachmentKind } from "@/lib/acp/attachments";
 import type { SyncedState } from "@/lib/acp/sync-store";
 import type {
   AcpAppDataDir,
+  AgentProvider,
   AcpCommand,
   AcpCustomEventPayload,
   AcpSessionMcpServer,
@@ -90,6 +91,7 @@ export interface AcpClientState {
   hiddenThreadIds: string[];
   hasInitializedDefaultFolder: boolean;
   sessionMcpServers: AcpSessionMcpServer[];
+  preferredProvider: AgentProvider;
   preferredMode: string;
   preferredModel: string;
   preferredThoughtLevel: string;
@@ -237,6 +239,7 @@ function loadInitialPrefs(): Partial<AcpClientState> {
       sessionMcpServers: Array.isArray(parsed.sessionMcpServers)
         ? (parsed.sessionMcpServers as AcpSessionMcpServer[])
         : [],
+      preferredProvider: parsed.preferredProvider === "quartz" ? "quartz" : "antigravity",
       preferredMode: typeof parsed.preferredMode === "string" ? parsed.preferredMode : "auto",
       preferredModel: typeof parsed.preferredModel === "string" ? parsed.preferredModel : "",
       preferredThoughtLevel:
@@ -268,6 +271,7 @@ const INITIAL_STATE: AcpClientState = {
   hiddenThreadIds: [],
   hasInitializedDefaultFolder: false,
   sessionMcpServers: [],
+  preferredProvider: "antigravity",
   preferredMode: "auto",
   preferredModel: "",
   preferredThoughtLevel: "",
@@ -330,6 +334,7 @@ function persistPrefs(): void {
         hiddenThreadIds: state.hiddenThreadIds,
         hasInitializedDefaultFolder: state.hasInitializedDefaultFolder,
         sessionMcpServers: state.sessionMcpServers,
+        preferredProvider: state.preferredProvider,
         preferredMode: state.preferredMode,
         preferredModel: state.preferredModel,
         preferredThoughtLevel: state.preferredThoughtLevel,
@@ -635,6 +640,7 @@ export const acpStore = {
     cwd?: string;
     additionalDirectories?: string[];
     sessionMcpServers?: AcpSessionMcpServer[];
+    preferredProvider?: AgentProvider;
     preferredMode?: string;
     preferredModel?: string;
     preferredThoughtLevel?: string;

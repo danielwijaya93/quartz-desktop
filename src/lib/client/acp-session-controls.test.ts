@@ -38,6 +38,7 @@ describe("acp-session-controls helpers", () => {
     const snapshot: AcpSessionSnapshot = {
       threadId: "t1",
       sessionId: "s1",
+      provider: "antigravity",
       cwd: "/tmp",
       additionalDirectories: [],
       commands: [],

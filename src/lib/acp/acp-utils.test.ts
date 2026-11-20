@@ -1,3 +1,4 @@
+import { resolveAgentProvider } from "@/lib/acp/agent-provider";
 import { parseAgyMcpListOutput } from "@/lib/acp/mcp-cli";
 import {
   buildAgentSpawnSpec,
@@ -208,5 +209,21 @@ describe("detectSessionAppDataDir", () => {
       command: "agy",
       args: ["acp", "--disable-telemetry", "--app-data-dir", "antigravity", "--add-dir", "/tmp/extra"],
     });
+  });
+
+  it("builds spawn spec for quartz ACP agent", () => {
+    expect(
+      buildAgentSpawnSpec({
+        provider: "quartz",
+        additionalDirectories: ["/tmp/extra"],
+      }),
+    ).toEqual({ command: "quartz", args: ["--acp"] });
+  });
+
+  it("resolves agent provider (default antigravity)", () => {
+    expect(resolveAgentProvider("quartz")).toBe("quartz");
+    expect(resolveAgentProvider("antigravity")).toBe("antigravity");
+    expect(resolveAgentProvider(undefined)).toBe("antigravity");
+    expect(resolveAgentProvider("unknown")).toBe("antigravity");
   });
 });

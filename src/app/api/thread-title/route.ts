@@ -1,4 +1,4 @@
-import { generateThreadTitleViaAgy } from "@/lib/acp/thread-title";
+import { generateThreadTitle } from "@/lib/acp/thread-title";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
     userMessage?: string;
     assistantPreview?: string;
     cwd?: string;
+    provider?: string;
   };
 
   const userMessage = body.userMessage?.trim();
@@ -16,7 +17,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ title: null }, { status: 400 });
   }
 
-  const title = await generateThreadTitleViaAgy({
+  const title = await generateThreadTitle({
+    provider: body.provider,
     userMessage,
     assistantPreview: body.assistantPreview,
     cwd: body.cwd,

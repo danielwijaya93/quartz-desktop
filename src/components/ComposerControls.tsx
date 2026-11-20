@@ -57,6 +57,7 @@ export function ComposerConfigControls() {
   const snapshot = useAcpStore((s) => selectEffectiveSnapshot(s, selectedThreadId));
   const openuiEnabled = useAcpStore((s) => selectEffectiveOpenUI(s, selectedThreadId));
   const hydrated = useAcpStore((s) => s.hydrated);
+  const preferredProvider = useAcpStore((s) => s.preferredProvider);
   const preferredModel = useAcpStore((s) => s.preferredModel);
   const preferredThoughtLevel = useAcpStore((s) => s.preferredThoughtLevel);
   const preferredMode = useAcpStore((s) => s.preferredMode);
@@ -162,6 +163,31 @@ export function ComposerConfigControls() {
         <span>OpenUI</span>
       </button>
 
+      <div
+        role="group"
+        aria-label="Agent provider"
+        className="inline-flex h-7 shrink-0 items-center rounded-lg bg-black/[0.04] dark:bg-white/[0.06] p-0.5 text-xs font-medium"
+      >
+        {(["antigravity", "quartz"] as const).map((prov) => (
+          <button
+            key={prov}
+            type="button"
+            aria-pressed={preferredProvider === prov}
+            title={prov === "quartz" ? "Quartz agent (settings from Quartz config)" : "Antigravity agent"}
+            onClick={() => acpStore.setPreferences({ preferredProvider: prov })}
+            className={`rounded-md h-6 px-2 transition-colors cursor-pointer ${FOCUS_RING} ${
+              preferredProvider === prov
+                ? "bg-white dark:bg-zinc-800 shadow-xs text-zinc-950 dark:text-zinc-50"
+                : "opacity-65 hover:opacity-100"
+            }`}
+          >
+            {prov === "quartz" ? "Quartz" : "Antigravity"}
+          </button>
+        ))}
+      </div>
+
+      {preferredProvider !== "quartz" && (
+        <>
       <button
         ref={modelTriggerRef}
         type="button"
@@ -310,6 +336,8 @@ export function ComposerConfigControls() {
           })}
         </div>
       </div>
+        </>
+      )}
     </>
   );
 }

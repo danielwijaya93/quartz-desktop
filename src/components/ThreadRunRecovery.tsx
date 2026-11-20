@@ -142,6 +142,7 @@ export function ThreadRunRecovery() {
             action: "loadSession",
             threadId: selectedThreadId,
             acpSessionId,
+            provider: state.preferredProvider ?? "antigravity",
             appDataDir: state.appDataDirs[selectedThreadId],
             cwd: state.cwd || undefined,
             additionalDirectories: state.additionalDirectories,

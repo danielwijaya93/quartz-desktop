@@ -18,7 +18,8 @@ import {
   createAcpStreamTranslator,
   isAgyMalformedToolCallNotice,
 } from "@/lib/acp/sse-translator";
-import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
+import { resolveAgentProvider } from "@/lib/acp/agent-provider";
+import type { AcpAppDataDir, AcpSessionMcpServer, AgentProvider } from "@/lib/acp/types";
 import { executeWorkspaceShell, resolveWorkspaceDir } from "@/lib/acp/workspace";
 import {
   buildShellResultOpenUILang,
@@ -49,6 +50,7 @@ interface ChatRequestBody {
   threadId?: string;
   runId?: string;
   messages?: IncomingMessage[];
+  provider?: AgentProvider;
   openuiEnabled?: boolean;
   acpSessionId?: string;
   appDataDir?: AcpAppDataDir;
@@ -214,9 +216,12 @@ export async function POST(req: NextRequest) {
 
   // Acquire or create persistent ACP session (fallback to fresh session if acpSessionId is stale)
   let sessionEntry;
+  const provider = resolveAgentProvider(body.provider);
+
   try {
     sessionEntry = await getOrCreateAcpSession({
       threadId,
+      provider,
       openuiEnabled: body.openuiEnabled,
       acpSessionId: body.acpSessionId,
       appDataDir: body.appDataDir,
@@ -232,6 +237,7 @@ export async function POST(req: NextRequest) {
       try {
         sessionEntry = await getOrCreateAcpSession({
           threadId,
+          provider,
           openuiEnabled: body.openuiEnabled,
           cwd,
           additionalDirectories: body.additionalDirectories,
@@ -244,14 +250,14 @@ export async function POST(req: NextRequest) {
         const message =
           fallbackErr instanceof Error
             ? fallbackErr.message
-            : "Failed to start Antigravity ACP session.";
+            : `Failed to start ${provider === "quartz" ? "Quartz" : "Antigravity"} ACP session.`;
         return new Response(JSON.stringify({ error: message }), {
           status: 500,
           headers: { "Content-Type": "application/json" },
         });
       }
     } else {
-      const message = err instanceof Error ? err.message : "Failed to start Antigravity ACP session.";
+      const message = err instanceof Error ? err.message : `Failed to start ${provider === "quartz" ? "Quartz" : "Antigravity"} ACP session.`;
       return new Response(JSON.stringify({ error: message }), {
         status: 500,
         headers: { "Content-Type": "application/json" },

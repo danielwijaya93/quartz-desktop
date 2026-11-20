@@ -25,3 +25,23 @@ npm run start       # Runs production server
 npm run typecheck   # TypeScript verification
 npm test            # Vitest unit tests
 ```
+
+## Agent providers
+
+The composer has a global provider picker (persisted in localStorage, default
+**Antigravity**):
+
+- **Antigravity (`agy acp`)** — full parity: Model / Thinking Level /
+  Permission Mode selectors, slash commands & skills, per-session MCP
+  injection, permission cards.
+- **Quartz (`quartz --acp`)** — model/effort/permission-mode are *not*
+  selectable in the composer; Quartz applies provider/model/effort from
+  `~/.quartz/config.json`. OpenUI injection uses Quartz's namespaced
+  `_meta.quartz.systemPrompt.append` (advertised in `initialize`). MCP servers
+  come from Quartz's own global config (`~/.quartz/mcp.json`, e.g.
+  `quartz mcp list`); per-session `mcpServers` are ignored for Quartz. Session
+  history uses the standard ACP `session/list` (titles from the first user
+  message).
+
+A thread is bound to the provider selected when it is created; resuming a
+session from history adopts that session's provider.

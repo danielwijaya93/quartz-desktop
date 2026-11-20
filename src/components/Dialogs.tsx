@@ -728,6 +728,7 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
           action: "loadSession",
           threadId,
           acpSessionId: s.sessionId,
+          provider: s.provider,
           appDataDir: s.appDataDir,
           cwd: s.cwd,
           additionalDirectories: s.additionalDirectories,
@@ -816,7 +817,10 @@ function SessionHistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="truncate font-medium">{s.title || "Untitled Session"}</span>
-                      {s.appDataDir && (
+                      <span className="shrink-0 rounded border border-black/10 dark:border-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider opacity-70">
+                        {s.provider === "quartz" ? "Quartz" : "Antigravity"}
+                      </span>
+                      {s.provider !== "quartz" && s.appDataDir && (
                         <span className="shrink-0 rounded border border-black/10 dark:border-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wider opacity-70">
                           {s.appDataDir === "antigravity" ? "App" : "CLI"}
                         </span>

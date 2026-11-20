@@ -15,6 +15,7 @@ function makeSnapshot(threadId: string, overrides: Partial<AcpSessionSnapshot> =
   return {
     threadId,
     sessionId: `sess-${threadId}`,
+    provider: "antigravity",
     cwd: "/workspace",
     additionalDirectories: [],
     commands: [],
@@ -41,6 +42,7 @@ function makeState(
     hiddenThreadIds: [],
     hasInitializedDefaultFolder: false,
     sessionMcpServers: [],
+    preferredProvider: "antigravity",
     preferredMode: "auto",
     preferredModel: "",
     preferredThoughtLevel: "",

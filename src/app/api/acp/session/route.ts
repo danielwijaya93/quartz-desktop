@@ -8,7 +8,8 @@ import {
   resetAcpSession,
   setAcpConfigOption,
 } from "@/lib/acp/session-manager";
-import type { AcpAppDataDir, AcpSessionMcpServer } from "@/lib/acp/types";
+import { resolveAgentProvider } from "@/lib/acp/agent-provider";
+import type { AcpAppDataDir, AcpSessionMcpServer, AgentProvider } from "@/lib/acp/types";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     action?: string;
     threadId?: string;
+    provider?: AgentProvider;
     openuiEnabled?: boolean;
     acpSessionId?: string;
     appDataDir?: AcpAppDataDir;
@@ -67,6 +69,7 @@ export async function POST(req: NextRequest) {
       case "init": {
         const entry = await getOrCreateAcpSession({
           threadId,
+          provider: resolveAgentProvider(body.provider),
           openuiEnabled: body.openuiEnabled,
           acpSessionId: body.acpSessionId,
           appDataDir: body.appDataDir,
@@ -94,6 +97,7 @@ export async function POST(req: NextRequest) {
       case "updateWorkspace": {
         const entry = await resetAcpSession({
           threadId,
+          provider: resolveAgentProvider(body.provider),
           openuiEnabled: body.openuiEnabled,
           cwd: body.cwd,
           additionalDirectories: body.additionalDirectories,
@@ -112,6 +116,7 @@ export async function POST(req: NextRequest) {
         const result = await loadHistoricalAcpSession({
           threadId,
           acpSessionId: body.acpSessionId,
+          provider: resolveAgentProvider(body.provider),
           appDataDir: body.appDataDir,
           cwd: body.cwd,
           additionalDirectories: body.additionalDirectories,
